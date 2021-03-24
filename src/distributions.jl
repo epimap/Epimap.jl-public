@@ -91,13 +91,13 @@ function Distributions.rand(rng::Random.AbstractRNG, ar::AR1)
     x = similar(ξ)
     
     # Compute
-    x[1] = eta[1]
+    x[1] = ξ[1]
     for t = 2:length(ar)
         x[t] = ar.alpha * x[t - 1] + δ * ξ[t]
     end
     
-    # μ (mean of the process) + σ_μ * σ_η (what's this?) + σ * xₜ (scale everything)
-    return @. ar.mu_loc + ar.sigma * x
+    # μ (mean of the process) + σ * xₜ (scale everything)
+    return @. ar.mu + ar.sigma * x
 end
 
 function Distributions.logpdf(ar::AR1, y::AbstractVector{<:Real})
