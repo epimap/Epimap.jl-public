@@ -21,5 +21,6 @@ make_logdensity(model_def, args...) = Turing.Variational.make_logjoint(model_def
 
 include("utils.jl")
 include("distributions.jl")
+include("models.jl")
 
 end
