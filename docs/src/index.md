@@ -4,7 +4,7 @@ CurrentModule = Epimap
 
 # Epimap
 
-Documentation for [Epimap](https://github.com/torfjelde/Epimap.jl).
+Documentation for [Epimap](https://github.com/epimap/Epimap.jl).
 
 ```@index
 ```
