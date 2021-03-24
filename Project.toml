@@ -1,0 +1,7 @@
+name = "Epimap"
+uuid = "afe58593-66b7-4c50-a53b-04432eb9ffe9"
+authors = ["Tor Erlend Fjelde", "Micheal J. Hutchinson", "Yee Whye Teh", "Hong Ge"]
+version = "0.1.0"
+
+[compat]
+julia = "1.5"
