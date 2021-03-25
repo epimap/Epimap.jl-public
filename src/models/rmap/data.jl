@@ -1,5 +1,4 @@
-import DrWatson
-using CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats
+using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats
 
 
 function Base.map(f, d::Dict)
@@ -11,11 +10,11 @@ end
 function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data"))
     # Download files if not present
     @RemoteFileSet datasets "Rmap data" begin
-        cases = @RemoteFile "$(rmap_path)/cases.csv"
-        areas = @RemoteFile "$(rmap_path)/areas.csv"
-        serial_intervals = @RemoteFile "$(rmap_path)/serial_interval.csv"
-        traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv"
-        traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv"
+        cases = @RemoteFile "$(rmap_path)/cases.csv" dir=datadir("rmap")
+        areas = @RemoteFile "$(rmap_path)/areas.csv" dir=datadir("rmap")
+        serial_intervals = @RemoteFile "$(rmap_path)/serial_interval.csv" dir=datadir("rmap")
+        traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv" dir=datadir("rmap")
+        traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv" dir=datadir("rmap")
     end
 
     # Download files if out of date
