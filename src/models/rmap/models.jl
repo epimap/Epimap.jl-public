@@ -4,7 +4,7 @@ function truncatednormlogpdf(μ, σ, x, lb, ub)
     logtp = StatsFuns.normlogcdf(μ, σ, ub) - StatsFuns.normlogcdf(μ, σ, lb)
     # TODO: deal with outside of boundary
     StatsFuns.normlogpdf(μ, σ, x) - logtp
-    # TODO: seems like there's something messed up on GPU with the way we return `Inf`
+    # TODO: seems like there's something messed up with the way we return `Inf`
     # if lb <= x <= ub
     #     StatsFuns.normlogpdf(μ, σ, x) - logtp
     # else
@@ -169,7 +169,8 @@ Note that those with default value `missing` will be sampled if not specified.
 end
 
 
-function make_logjoint(
+function Epimap.make_logjoint(
+    ::typeof(rmap_naive),
     C, D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
