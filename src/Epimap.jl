@@ -5,6 +5,11 @@ import StatsFuns
 
 using Turing, Distributions
 
+export Rmap,
+    NegativeBinomial2,
+    NegativeBinomial3,
+    AR1
+
 """
     make_logdensity(model_def, args...)
 
