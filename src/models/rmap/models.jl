@@ -73,6 +73,7 @@ Note that those with default value `missing` will be sampled if not specified.
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
+    num_impute = 10,
     days_per_step = 1,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
@@ -157,15 +158,20 @@ Note that those with default value `missing` will be sampled if not specified.
                 X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
             end
         end
+    end
 
-        # Observe
+    # Observe (if we're done imputing)
+    for t = num_impute:num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
+
 
         for i = 1:num_regions
             C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         end
     end
+
+    return (f = f, X = X)
 end
 
 
