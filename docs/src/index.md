@@ -12,3 +12,8 @@ Documentation for [Epimap](https://github.com/epimap/Epimap.jl).
 ```@autodocs
 Modules = [Epimap]
 ```
+
+## Rmap
+```@autodocs
+Modules = [Epimap.Rmap]
+```

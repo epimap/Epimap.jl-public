@@ -1,10 +1,9 @@
 module Epimap
 
 import Random
+import StatsFuns
 
 using Turing, Distributions
-
-import StatsFuns
 
 """
     make_logdensity(model_def, args...)
@@ -19,8 +18,10 @@ The method should at least be able to handle the arguments passed as a flattened
 """
 make_logdensity(model_def, args...) = Turing.Variational.make_logjoint(model_def(args...))
 
+
 include("utils.jl")
 include("distributions.jl")
-include("models.jl")
+
+include("models/rmap/Rmap.jl")
 
 end
