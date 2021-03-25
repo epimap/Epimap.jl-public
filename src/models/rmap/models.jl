@@ -134,7 +134,7 @@ Note that those with default value `missing` will be sampled if not specified.
     # to allow Zygote.jl/reverse-mode AD compatibility.
     X = TV(undef, (num_regions, num_times))
 
-    X[:, 1] .= ξ
+    X[:, 1] .= 0
 
     for t = 2:num_times
         # Flux matrix
@@ -258,7 +258,7 @@ function Epimap.make_logjoint(
         # to allow Zygote.jl/reverse-mode AD compatibility.
         X = TV(undef, (num_regions, num_times))
 
-        X[:, 1] .= ξ
+        X[:, 1] .= 0
 
         for t = 2:num_times
             # Flux matrix
