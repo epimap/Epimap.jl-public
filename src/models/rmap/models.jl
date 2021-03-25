@@ -143,7 +143,7 @@ Note that those with default value `missing` will be sampled if not specified.
 
         # Eq. (4) but we also add in the observed cases `C` at each time
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-        Zₜ = (X[:, ts_prev_infect] + C[:, ts_prev_infect]) * W[1:min(prev_infect_cutoff, t - 1)]
+        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
@@ -171,7 +171,7 @@ Note that those with default value `missing` will be sampled if not specified.
         end
     end
 
-    return (f = f, X = X)
+    return (R = R, X = X)
 end
 
 
