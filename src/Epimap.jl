@@ -4,6 +4,7 @@ import Random
 import StatsFuns
 
 using Turing, Distributions
+using DocStringExtensions
 
 export Rmap,
     NegativeBinomial2,

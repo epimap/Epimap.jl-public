@@ -7,14 +7,22 @@ function Base.map(f, d::Dict)
 end
 
 # TODO: make this nicer
+"""
+    load_data(rmap_path)
+
+Loads the Rmap data from the data-processing project and returns a named tuple of dataframes.
+
+`rmap_path` can be a local (absolute) path (which should then be prefixed by `"file://"`), or it can be
+a direct link to the data-folder in the repository.
+"""
 function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data"))
     # Download files if not present
     @RemoteFileSet datasets "Rmap data" begin
-        cases = @RemoteFile "$(rmap_path)/cases.csv" dir=datadir("rmap")
-        areas = @RemoteFile "$(rmap_path)/areas.csv" dir=datadir("rmap")
-        serial_intervals = @RemoteFile "$(rmap_path)/serial_interval.csv" dir=datadir("rmap")
-        traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv" dir=datadir("rmap")
-        traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv" dir=datadir("rmap")
+        cases = @RemoteFile "$(rmap_path)/cases.csv" dir=datadir("rmap") updates=:daily
+        areas = @RemoteFile "$(rmap_path)/areas.csv" dir=datadir("rmap") updates=:daily
+        serial_intervals = @RemoteFile "$(rmap_path)/serial_interval.csv" dir=datadir("rmap") updates=:never
+        traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv" dir=datadir("rmap") updates=:never
+        traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv" dir=datadir("rmap") updates=:never
     end
 
     # Download files if out of date
@@ -64,16 +72,56 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
     return data
 end
 
+"""
+    setup_args(::typeof(rmap_naive), data; kwargs...)
 
+Converts `data` into a named tuple with order corresponding to `rmap_naive` constructor.
+
+This allows one to do the following
+
+```julia
+data = Rmap.load_data()
+setup_args = Rmap.setup_args(Rmap.rmap_naive, data)
+model = Rmap.rmap_naive(setup_args...)
+```
+
+Note that this method does *not* return arguments for which `rmap_naive` has default values.
+If one wants to override the default arguments, then one needs to as follows:
+```julia
+data = Rmap.load_data()
+
+# IMPORTANT: Order needs to be the same as model-arguments!!!
+default_args = (
+    ρ_spatial = 10.0,
+    ρ_time = 0.1,
+    σ_spatial = 0.1,
+    σ_local = 0.1,
+    σ_ξ = 1.0,
+)
+
+setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data), default_args)
+model = Rmap.rmap_naive(setup_args...)
+```
+
+
+## Arguments
+- [`rmap_naive`](@ref)
+- `data`: as returned by [`load_data`](@ref)
+
+## Keyword arguments
+- `days_per_step = 1`: specifies how many days to use per step (WARNING: does nothing at the moment)
+- `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
+- `test_delay_days = 21`: maximum number of days from infection to test
+- `presymptomdays = 2`: number of days in which the infection is discoverable
+
+"""
 function setup_args(
     ::typeof(rmap_naive),
-    data,
-    args...;
+    data;
     days_per_step = 1,
     infection_cutoff = 30,
     test_delay_days = 21,
-    presymptomdays = 2,
-    kwargs...
+    presymptomdays = 2
 )
     (days_per_step != 1) && @warn "setting `days_per_step` to ≠ 1 has no effect at the moment"
 

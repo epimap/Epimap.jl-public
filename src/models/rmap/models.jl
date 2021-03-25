@@ -61,10 +61,6 @@ Naive implementation of full Rmap model.
 - `days_per_step = 1`: specifies how many days of data each time step corresponds to.
 
 Note that those with default value `missing` will be sampled if not specified.
-
-## Notes
-- Currently [2021-03-24 Wed] specifying `Matrix{Int}` won't work since we are now using
-  a continuous variable to fill in the first values ("global" infection pressure `ξ`).
 """
 @model function rmap_naive(
     C, D, W,

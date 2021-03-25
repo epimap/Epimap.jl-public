@@ -12,6 +12,7 @@ using Distributions
 using KernelFunctions
 using PDMats
 using UnPack
+using DocStringExtensions
 
 include("models.jl")
 include("data.jl")
