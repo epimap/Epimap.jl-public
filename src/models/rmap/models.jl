@@ -36,7 +36,7 @@ end
 time_U(K_time) = cholesky(PDMat(K_time)).U
 time_U(K_time, ρ_time) = time_U(K_time .^ inv.(ρ_time))
 
-"""
+@doc raw"""
     rmap_naive(args...)
 
 Naive implementation of full Rmap model.
@@ -61,6 +61,49 @@ Naive implementation of full Rmap model.
 - `days_per_step = 1`: specifies how many days of data each time step corresponds to.
 
 Note that those with default value `missing` will be sampled if not specified.
+
+## Mathematical description
+```math
+\begin{align*}
+  \psi & \sim \mathcal{N}_{ + }(0, 5) \\
+  \phi_i & \sim \mathcal{N}_{ + }(0, 5) & \quad \forall i = 1, \dots, n \\
+  \underline{\text{Time:}} \\
+  \rho_{\mathrm{time}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{time}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  % \big( K_{\mathrm{time}} \big)_{t, t'} & := \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}(t, t')^{1 / \rho_{\mathrm{time}}} & \quad \forall t, t' = 1, \dots, T \\
+  % L_{\mathrm{time}} & := \mathrm{cholesky}(K_{\mathrm{time}}) \\
+  f_{\mathrm{time}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}^{1 / \rho_{\mathrm{time}}} \Big) \\
+  \underline{\text{Space:}} \\
+  \rho_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  % \big( k_{\mathrm{spatial}} \big)_{i, j} & := \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}(i, j)^{1 / \rho_{\mathrm{spatial}}} & \quad \forall i, j = 1, \dots, n \\
+  % L_{\mathrm{space}} & := \mathrm{cholesky}(k_{\mathrm{spatial}}) \\
+  f_{\mathrm{space}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}^{1 / \rho_{\mathrm{spatial}}} \Big) \\
+  \underline{\text{R-value:}} \\
+  % E_{i, t} & \sim \mathcal{N}(0, 1) & \quad \forall i = 1, \dots, n, \quad t = 1, \dots, T \\
+  % f & := L_{\mathrm{space}} \ E \ L_{\mathrm{time}}^T \\
+  f & := f_{\mathrm{time}}(1, \dots, T) + f_{\mathrm{space}} \big( (x_1, y_1), \dots, (x_n, y_n) \big) \\
+  R & := \exp(f) \\
+  \underline{\text{AR-process:}} \\
+  \mu_{\mathrm{AR}} & \sim \mathcal{N}(-2.19, 0.25) \\
+  \sigma_{\mathrm{AR}} & \sim \mathcal{N}_{ + }(0, 0.25) \\
+  \tilde{\alpha} & \sim \mathcal{N}\big(0, 1 - e^{- \Delta t / 28} \big) \\
+  \alpha & := 1 - \mathrm{constrain}(\tilde{\alpha}, 0, 1) \\
+  \tilde{\rho} & \sim \mathrm{AR}_1(\alpha, \mu_{\mathrm{AR}}, \sigma_{\mathrm{AR}}) \\
+  \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
+  \underline{\text{Flux matrix:}} \\
+  \beta & \sim \mathrm{Uniform}(0, 1) \\
+  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T \\
+  \underline{\text{Latent process:}} \\
+  \xi & \sim \mathcal{N}_{ + }(0, \sigma_{\xi}^2) \\
+  Z_{i, t} & := \sum_{\tau = 1}^{t} I(\tau < T_{\mathrm{flux}}) X_{i, t - \tau} W_{\tau} & \quad \forall i = 1, \dots, n, \quad t = 1, \dots, T \\
+  \tilde{Z}_{i, t} & := \sum_{i = 1}^{n} F_{i, t} Z_{i, t} & \quad \forall  i = 1, \dots, n, \quad t = 1, \dots, T \\
+  X_{i, t} & \sim \mathrm{NegativeBinomial3}\big(R_{i, t} \tilde{Z}_{i, t} + \xi, \psi\big) & \quad \forall  i = 1, \dots, n, \quad t = 1, \dots, T \\
+  \underline{\text{Observe:}} \\
+  C_{i, t} & \sim \mathrm{NegativeBinomial3}\bigg( \sum_{\tau = 1}^{t} I(\tau < T_{\mathrm{test}}) X_{i, t - \tau} D_{\tau}, \ \phi_i \bigg) & \quad \forall  i = 1, \dots, n, \quad t = 1, \dots, T
+\end{align*}
+```
 """
 @model function rmap_naive(
     C, D, W,
