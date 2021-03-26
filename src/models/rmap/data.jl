@@ -34,9 +34,11 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
     end
 
     # Find the areas that we have all kinds of data for
-    valid_areas = Set(dataframes[:areas][:, :area])
+    areas_sorted = sort(dataframes[:areas][:, :area])
+    valid_areas = Set(areas_sorted)
     df2areacol = Dict{Symbol, String}()
 
+    # Try to determine which column correspond to the area name
     for (name, df) in pairs(dataframes)
         idx = findfirst(names(df)) do colname
             startswith(lowercase(colname), "area") && return true
@@ -58,9 +60,17 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
 
     # Filter data based on the available areas
     for (name, colname) in pairs(df2areacol)
-        df = dataframes[name]
+        # First sort the dataframe according to names to ensure that we get consistent ordering
+        df = sort(dataframes[name], colname)
         mask = ∈(valid_areas).(df[:, colname])
-        dataframes[name] = df[mask, :]
+        if startswith(string(name), "traffic_flux")
+            # For the traffic flux we need to ensure that we only extract those columns too.
+            # Note that because also need to re-order the columns in the same manner, these
+            # also needs to be sorted.
+            dataframes[name] = df[mask, ["Column1"; sort(df[:, colname])[mask];]]
+        else
+            dataframes[name] = df[mask, :]
+        end
     end
 
     # Convert into `NamedTuple` because nicer to work with
@@ -68,6 +78,16 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
 
     # Perform certain transformations
     data.cases[!, 3:end] = convert.(Int, data.cases[:, 3:end])
+
+    # TODO: Make this a part of the test-suite instead.
+    @assert (
+        data.areas[:, "area"] ==
+        data.cases[:, "Area name"] ==
+        data.traffic_flux_in[:, "Column1"] ==
+        names(data.traffic_flux_in)[2:end] ==
+        data.traffic_flux_out[:, "Column1"] ==
+        names(data.traffic_flux_out)[2:end]
+    ) "something went wrong with the sorting"
 
     return data
 end
