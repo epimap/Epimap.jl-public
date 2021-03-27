@@ -2,6 +2,7 @@ module Epimap
 
 import Random
 import StatsFuns
+import NNlib
 
 using Turing, Distributions
 using DocStringExtensions
@@ -26,6 +27,7 @@ make_logjoint(model_def, args...) = Turing.Variational.make_logjoint(model_def(a
 
 
 include("utils.jl")
+include("conv.jl")
 include("distributions.jl")
 
 include("models/rmap/Rmap.jl")

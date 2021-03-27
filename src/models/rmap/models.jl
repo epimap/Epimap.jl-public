@@ -18,10 +18,16 @@ end
 ### Convenience methods ###
 𝒩₊(μ, σ) = truncated(Normal(μ, σ), 1e-6, Inf)
 
+PDMats.PDMat(P::PDMat) = P
+
 function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # Use `PDMats.ScalMat` to ensure that positive-definiteness is preserved
-    K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
-    K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
+    # K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
+    # K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
+    # HACK: use this until we have an adjoint for `ScalMat` constructor in ChainRulesCore.jl
+    K_spatial = PDMat(σ_spatial^2 .* K_spatial_nonscaled)
+    K_local = PDMat(σ_local^2 .* K_local)
+
 
     K_space = PDMat(K_local + K_spatial) # `PDMat` is a no-op if the input is already a `PDMat`
     L_space = cholesky(K_space).L
@@ -213,6 +219,55 @@ Note that those with default value `missing` will be sampled if not specified.
     return (R = R, X = X)
 end
 
+@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ)
+    # Compute the full flux
+    F_cross = @. β * F_out + (1 - β) * F_in
+    # oneminusρₜ = @. 1 - ρₜ
+    # kron(1 .- ρₜ', F_cross)
+    # F = @tensor begin
+    #     F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * F_cross[i, j]
+    # end
+
+    # Equivalent to the above `@tensor`
+    res1 = kron(1 .- ρₜ', F_cross)
+    res2 = kron(ρₜ', F_id)
+    F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
+
+
+    # Convolve `X` with `W`
+    Z = Epimap.conv(X, W)
+
+    # Compute `Z̃` for every time-step
+    # This is equivalent to
+    #
+    #   NNlib.batched_mul(F, reshape(Z, size(Z, 1), 1, size(Z, 2)))
+    #
+    # where we get
+    #
+    #   Z̃[:, k] := F[:, :, k] * Z[:, k]
+    #
+    # which is exactly what we want.
+    Z̃ = NNlib.batched_vec(F, Z)
+
+    # Compute the mean for the different regions at every time-step
+    μ = R .* Z̃ .+ ξ
+
+    # At this point `μ` will be of size `(num_regions, num_timesteps)`
+    return sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, 0, Inf))
+end
+
+
+@inline function _loglikelihood(C, X, D, ϕ, num_impute = 1)
+    # Deal with potential numerical issues
+    expected_positive_tests = clamp.(Epimap.conv(X, D), 0, Inf)
+    # TODO: implement vectorized version of `NegativeBinomial`
+    # We extract only the time-steps after the imputation-step
+    return loglikelihood(
+        arraydist(NegativeBinomial3.(expected_positive_tests[:, num_impute:end], ϕ)),
+        C[:, num_impute:end]
+    )
+end
+
 
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
@@ -222,9 +277,11 @@ function Epimap.make_logjoint(
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
+    num_impute = 10,
     days_per_step = 1,
-    ::Type{TV} = Matrix{T}
-) where {T<:Real, TV}
+    ::Type{TV} = Matrix{Float64},
+    ::Type{T} = Float64
+) where {T, TV}
     function logjoint(args)
         @unpack ψ, ϕ, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
 
@@ -299,38 +356,36 @@ function Epimap.make_logjoint(
         # ξ ~ 𝒩₊(0, σ_ξ)
         lp += truncatednormlogpdf.(0, σ_ξ, ξ, 0, Inf)
 
-        # TODO: move the computation of `Z̃ₜ` into a function, so we can define a custom adjoint for it,
-        # to allow Zygote.jl/reverse-mode AD compatibility.
-        X = TV(undef, (num_regions, num_times))
+        # for t = 2:num_times
+        #     # Flux matrix
+        #     Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
-        X[:, 1] .= 0
+        #     # Eq. (4) but we also add in the observed cases `C` at each time
+        #     ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
+        #     Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
+        #     Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
-        for t = 2:num_times
-            # Flux matrix
-            Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        #     # Use continuous approximation
+        #     μ = R[:, t] .* Z̃ₜ .+ ξ
+        #     # # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
+        #     # for i = 1:num_regions
+        #     #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
+        #     # end
+        #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
+        # end
 
-            # Eq. (4) but we also add in the observed cases `C` at each time
-            ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-            Zₜ = (X[:, ts_prev_infect] + C[:, ts_prev_infect]) * W[1:min(prev_infect_cutoff, t - 1)]
-            Z̃ₜ = Fₜ * Zₜ # Eq. (5)
+        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ)
 
-            # Use continuous approximation
-            μ = R[:, t] .* Z̃ₜ .+ ξ
-            # # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
-            # for i = 1:num_regions
-            #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
-            # end
-            lp += truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t])
+        # for t = num_impute:num_times
+        #     # Observe
+        #     ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
+        #     expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
 
-            # Observe
-            ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
-            expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-
-            # for i = 1:num_regions
-            #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
-            # end
-            lp += loglikelihood(arraydist(NegativeBinomial3.(expected_positive_tests, ϕ)), C[:, t])
-        end
+        #     # for i = 1:num_regions
+        #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
+        #     # end
+        # end
+        lp += _loglikelihood(C, X, D, ϕ, num_impute)
 
         return lp
     end
