@@ -33,6 +33,18 @@ end
 
 NegativeBinomial3(μ, ϕ) = NegativeBinomial2(μ, μ / ϕ)
 
+@inline nbinomlogpdf3(μ, ϕ, k) = nbinomlogpdf2(μ, μ / ϕ, k)
+@inline function nbinomlogpdf2(μ, ϕ, k)
+    p = 1 / (1 + μ / ϕ)
+    r = ϕ
+
+    return nbinomlogpdf(p, r, k)
+end
+
+@inline function nbinomlogpdf(p, r, k)
+    r_ = r * log(p) + k * log1p(-p)
+    return r_ - log(k + r) - SpecialFunctions.logbeta(r, k + 1)
+end
 
 """
     GammaMeanCv(mean, cv)

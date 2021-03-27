@@ -1,7 +1,7 @@
 module Epimap
 
 import Random
-import StatsFuns
+import StatsFuns, SpecialFunctions
 import NNlib
 
 using Turing, Distributions

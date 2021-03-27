@@ -262,12 +262,12 @@ end
     expected_positive_tests = clamp.(Epimap.conv(X, D), 0, Inf)
     # TODO: implement vectorized version of `NegativeBinomial`
     # We extract only the time-steps after the imputation-step
-    return loglikelihood(
-        arraydist(NegativeBinomial3.(expected_positive_tests[:, num_impute:end], ϕ)),
+    return sum(Epimap.nbinomlogpdf3.(
+        expected_positive_tests[:, num_impute:end],
+        ϕ,
         C[:, num_impute:end]
-    )
+    ))
 end
-
 
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
