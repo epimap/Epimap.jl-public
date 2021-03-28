@@ -1,4 +1,4 @@
-using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats
+using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats, Adapt
 
 
 function Base.map(f, d::Dict)
@@ -93,9 +93,12 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
 end
 
 """
-    setup_args(::typeof(rmap_naive), data; kwargs...)
+    setup_args(::typeof(rmap_naive), data[, T = Float64]; kwargs...)
 
 Converts `data` into a named tuple with order corresponding to `rmap_naive` constructor.
+
+`T` specifies which element type to use for the data, e.g. `T = Float32` will convert
+all floats to `Float32` rather than the default `Float64`.
 
 This allows one to do the following
 
@@ -137,12 +140,13 @@ model = Rmap.rmap_naive(setup_args...)
 """
 function setup_args(
     ::typeof(rmap_naive),
-    data;
+    data,
+    ::Type{T} = Float64;
     days_per_step = 1,
     infection_cutoff = 30,
     test_delay_days = 21,
     presymptomdays = 2
-)
+) where {T}
     (days_per_step != 1) && @warn "setting `days_per_step` to ≠ 1 has no effect at the moment"
 
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
@@ -185,7 +189,7 @@ function setup_args(
     F_in = Array(traffic_flux_in[1:end, 2:end])
 
     # Resulting arguments
-    return (
+    result = (
         C = cases,
         D = test_delay_profile,
         W = serial_intervals,
@@ -196,4 +200,7 @@ function setup_args(
         K_spatial = K_spatial,
         K_local = K_local
     )
+
+    # 
+    return adapt(Epimap.FloatMaybeAdaptor{T}(), result)
 end
