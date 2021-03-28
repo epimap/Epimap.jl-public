@@ -119,6 +119,9 @@ Note that those with default value `missing` will be sampled if not specified.
     num_regions = size(C, 1)
     num_times = size(C, 2)
 
+    @assert num_times % days_per_step == 0
+    num_steps = num_times ÷ days_per_step
+
     prev_infect_cutoff = length(W)
     test_delay_cutoff = length(D)
 
@@ -136,8 +139,8 @@ Note that those with default value `missing` will be sampled if not specified.
     σ_local ~ 𝒩₊(0, 5)
 
     # GP prior
-    E_vec ~ MvNormal(num_regions * num_times, 1.0)
-    E = reshape(E_vec, (num_regions, num_times))
+    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
+    E = reshape(E_vec, (num_regions, num_steps))
 
     # Get cholesky decomps using precomputed kernel matrices
     L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
@@ -164,7 +167,7 @@ Note that those with default value `missing` will be sampled if not specified.
 
     # Use bijector to transform to have support (0, 1) rather than ℝ.
     b = Bijectors.Logit{1, Float64}(0.0, 1.0)
-    ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b))
+    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
 
     # Global infection
     σ_ξ ~ 𝒩₊(0, 5)
@@ -177,8 +180,11 @@ Note that those with default value `missing` will be sampled if not specified.
     X[:, 1] .= 0
 
     for t = 2:num_times
+        # compute the index of the step this day is in
+        t_step = t ÷ days_per_step
+
         # Flux matrix
-        Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
         # Eq. (4) but we also add in the observed cases `C` at each time
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
@@ -186,7 +192,7 @@ Note that those with default value `missing` will be sampled if not specified.
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
-        μ = R[:, t] .* Z̃ₜ .+ ξ
+        μ = R[:, t_step] .* Z̃ₜ .+ ξ
         if eltype(X) <: Integer
             for i = 1:num_regions
                 X[i, t] ~ NegativeBinomial3(μ[i], ψ)
