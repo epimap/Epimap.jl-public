@@ -41,6 +41,27 @@ NegativeBinomial3(μ, ϕ) = NegativeBinomial2(μ, μ / ϕ)
     return nbinomlogpdf(p, r, k)
 end
 
+"""
+    nbinomlogpdf(p, r, k)
+
+Julia implementation of `StatsFuns.nbinomlogpdf`.
+
+## Notes
+- Note: `SpecialFunctions.logbeta(a::Real, b::Int)` will result in a call to
+  `SpecialFunctions.loggamma(b::Int)` which returns `Float64`. Therefore,
+  to preserve floating point precision, `k` needs to be converted into float.
+
+## Examples
+```jldoctest
+julia> using Epimap, Distributions
+
+julia> p = 0.5; r = 10; k = 5;
+
+julia> Epimap.nbinomlogpdf(p, r, k) ≈ logpdf(NegativeBinomial(r, p), k)
+true
+```
+
+"""
 @inline function nbinomlogpdf(p, r, k)
     r_ = r * log(p) + k * log1p(-p)
     return r_ - log(k + r) - SpecialFunctions.logbeta(r, k + 1)
