@@ -748,9 +748,9 @@ uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 
 [[SciMLBase]]
 deps = ["ArrayInterface", "CommonSolve", "Distributed", "DocStringExtensions", "IteratorInterfaceExtensions", "LinearAlgebra", "Logging", "RecipesBase", "RecursiveArrayTools", "StaticArrays", "Statistics", "Tables", "TreeViews"]
-git-tree-sha1 = "6014c210ec314c49de4686edeca86fda14ab0867"
+git-tree-sha1 = "52f294ca1df95cdcff974ead1423d5ab74e10451"
 uuid = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
-version = "1.8.6"
+version = "1.9.0"
 
 [[ScientificTypes]]
 git-tree-sha1 = "1d3f5f8bdf5dd0c9951eb9c595ee08a728aec331"

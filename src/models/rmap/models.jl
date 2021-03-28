@@ -259,7 +259,7 @@ end
 
 @inline function _loglikelihood(C, X, D, ϕ, num_impute = 1)
     # Deal with potential numerical issues
-    expected_positive_tests = clamp.(Epimap.conv(X, D), 0, Inf)
+    expected_positive_tests = Epimap.conv(X, D)
 
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests)
