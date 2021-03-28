@@ -210,7 +210,6 @@ Note that those with default value `missing` will be sampled if not specified.
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
 
-
         for i = 1:num_regions
             C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         end
@@ -253,19 +252,21 @@ end
     μ = R .* Z̃ .+ ξ
 
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
-    return sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, 0, Inf))
+    T = eltype(μ)
+    return sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T), T(Inf)))
 end
 
 
 @inline function _loglikelihood(C, X, D, ϕ, num_impute = 1)
     # Deal with potential numerical issues
     expected_positive_tests = clamp.(Epimap.conv(X, D), 0, Inf)
-    # TODO: implement vectorized version of `NegativeBinomial`
+
     # We extract only the time-steps after the imputation-step
+    T = eltype(expected_positive_tests)
     return sum(Epimap.nbinomlogpdf3.(
         expected_positive_tests[:, num_impute:end],
         ϕ,
-        C[:, num_impute:end]
+        T.(C[:, num_impute:end]) # conversion ensures precision is preserved
     ))
 end
 
@@ -279,11 +280,18 @@ function Epimap.make_logjoint(
     σ_ξ = missing,
     num_impute = 10,
     days_per_step = 1,
-    ::Type{TV} = Matrix{Float64},
-    ::Type{T} = Float64
-) where {T, TV}
+    ::Type{TV} = Matrix{Float64}
+) where {TV}
     function logjoint(args)
         @unpack ψ, ϕ, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+
+        T = eltype(ψ) # TODO: Should probably find a better way to deal with this
+
+        μ₀ = zero(T)
+        σ₀ = T(5)
+
+        lb = zero(T)
+        ub = T(Inf)
 
         lp = zero(T)
 
@@ -295,22 +303,22 @@ function Epimap.make_logjoint(
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = truncatednormlogpdf(0, 5, ψ, 0, Inf)
+        lp = truncatednormlogpdf(μ₀, σ₀, ψ, lb, ub)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(truncatednormlogpdf.(0, 5, ϕ, 0, Inf))
+        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ϕ, lb, ub))
 
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, ρ_spatial, 0, Inf))
+        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ρ_spatial, lb, ub))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, ρ_time, 0, Inf))
+        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ρ_time, lb, ub))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, σ_spatial, 0, Inf))
+        lp += sum(truncatednormlogpdf.(μ₀, σ₀, σ_spatial, lb, ub))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, σ_local, 0, Inf))
+        lp += sum(truncatednormlogpdf.(μ₀, σ₀, σ_local, lb, ub))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -333,28 +341,28 @@ function Epimap.make_logjoint(
         # AR(1) prior
         # set mean of process to be 0.1, 1 std = 0.024-0.33
         # μ_ar ~ Normal(-2.19, 0.25)
-        lp += normlogpdf(-2.19, 0.25, μ_ar)
+        lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += normlogpdf(0.0, 0.25, σ_ar)
+        lp += normlogpdf(T(0.0), T(0.25), σ_ar)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).
-        σ_α = 1 - exp(- days_per_step / 28)
+        σ_α = 1 - exp(- days_per_step / T(28))
         # α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-        b_α_pre = inv(Bijectors.Logit(0.0, 1.0))
+        b_α_pre = inv(Bijectors.Logit(T(0.0), T(1.0)))
         lp += normlogpdf(b_α_pre(α_pre)) + logabsdetjac(b_α_pre, α_pre)
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
-        b_ρₜ = Bijectors.Logit{1, Float64}(0.0, 1.0)
+        b_ρₜ = Bijectors.Logit{1, T}(T(0.0), T(1.0))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += truncatednormlogpdf.(0, 5, σ_ξ, 0, Inf)
+        lp += truncatednormlogpdf.(μ₀, σ₀, σ_ξ, lb, ub)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += truncatednormlogpdf.(0, σ_ξ, ξ, 0, Inf)
+        lp += truncatednormlogpdf.(μ₀, σ_ξ, ξ, lb, ub)
 
         # for t = 2:num_times
         #     # Flux matrix
@@ -373,7 +381,6 @@ function Epimap.make_logjoint(
         #     # end
         #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
-
         lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ)
 
         # for t = num_impute:num_times
