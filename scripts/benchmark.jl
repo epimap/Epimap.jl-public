@@ -1,3 +1,7 @@
+# NOTE: This only sets up the benchmark suite; it does NOT run it!
+# To run it, open a Julia repl and include this file (using `include`), and then
+# follow up with `run(suite, verbose=True, seconds=60)` or whatever options you want.
+
 using BenchmarkTools
 
 using Epimap, Adapt, Zygote
