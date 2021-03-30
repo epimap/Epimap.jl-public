@@ -3,7 +3,6 @@
 # follow up with `run(suite, verbose=True, seconds=60)` or whatever options you want.
 
 using BenchmarkTools
-# using Revise
 
 using Epimap, Adapt, Zygote
 using Epimap.Turing
@@ -46,13 +45,6 @@ nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
         v
     end
 end;
-
-# adaptor = Epimap.FloatMaybeAdaptor{Float32}()
-# nt = adapt(adaptor, nt)
-# setup_args = adapt(adaptor, setup_args)
-# logπ = Epimap.make_logjoint(Rmap.rmap_naive, setup_args...)
-# logπ(nt)
-# pb(logπ, Float32, nt)
 
 # Construct benchmark-suite
 suite = BenchmarkGroup()
