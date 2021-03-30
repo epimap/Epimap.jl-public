@@ -159,8 +159,6 @@ function setup_args(
     num_infer = num_days - num_cond
     @assert num_infer % days_per_step == 0
 
-    # TODO: should we "sub-sample" the infection and test delay profiles to account for `days_per_step`?
-
     # Serial intervals / infection profile
     serial_intervals = serial_intervals[1:min(infection_cutoff, size(serial_intervals, 1)), :fit]
     normalize!(serial_intervals, 1) # re-normalize wrt. ℓ1-norm to ensure still sums to 1
