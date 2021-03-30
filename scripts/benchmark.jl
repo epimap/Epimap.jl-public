@@ -22,11 +22,11 @@ default_args = (
     ρ_time = 0.1,
     σ_spatial = 0.1,
     σ_local = 0.1,
-    σ_ξ = 1.0
+    σ_ξ = 1.0,
 )
 
 # Construct the model arguments from data
-setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data), default_args);
+setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data, days_per_step=4), default_args);
 
 # Instantiate model
 m = Rmap.rmap_naive(setup_args...);
@@ -38,7 +38,7 @@ num_regions = size(data.cases, 1);
 nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
     if startswith(string(first(ks)), "X")
         # Add back in the first column since it's not inferred
-        hcat(zeros(eltype(v), num_regions), reshape(v, (num_regions, :)))
+        reshape(v, (num_regions, :))
     elseif length(v) == 1
         first(v)
     else

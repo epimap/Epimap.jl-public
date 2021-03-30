@@ -53,6 +53,7 @@ Naive implementation of full Rmap model.
     the probability that an infected person tests positive after `t` steps.
 - `W::AbstractVector`: generation distribution/infection profile of length `< num_times`, i.e.
     `W[t]` is the probability of a secondary infection after `t` steps.
+- `X_cond::AbstractMatrix`: Precomputed Xt before the start of the modelling period to condition on.
 - `F_id::AbstractMatrix`: diagonal flux matrix representing local infection.
 - `F_out::AbstractMatrix`: flux matrix representing outgoing infections.
 - `F_in::AbstractMatrix`: flux matrix representing incoming infections.
@@ -112,18 +113,22 @@ Note that those with default value `missing` will be sampled if not specified.
 ```
 """
 @model function rmap_naive(
-    C, D, W,
+    C, D, W, X_cond,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
+    days_per_step = 1,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
-    num_impute = 10,
-    days_per_step = 1,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
     num_regions = size(C, 1)
     num_times = size(C, 2)
+    num_cond = size(X_cond, 2)
+    num_infer = num_times - num_cond
+
+    @assert num_infer % days_per_step == 0
+    num_steps = num_infer ÷ days_per_step
 
     prev_infect_cutoff = length(W)
     test_delay_cutoff = length(D)
@@ -142,8 +147,8 @@ Note that those with default value `missing` will be sampled if not specified.
     σ_local ~ 𝒩₊(0, 5)
 
     # GP prior
-    E_vec ~ MvNormal(num_regions * num_times, 1.0)
-    E = reshape(E_vec, (num_regions, num_times))
+    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
+    E = reshape(E_vec, (num_regions, num_steps))
 
     # Get cholesky decomps using precomputed kernel matrices
     L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
@@ -170,7 +175,7 @@ Note that those with default value `missing` will be sampled if not specified.
 
     # Use bijector to transform to have support (0, 1) rather than ℝ.
     b = Bijectors.Logit{1, Float64}(0.0, 1.0)
-    ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b))
+    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
 
     # Global infection
     σ_ξ ~ 𝒩₊(0, 5)
@@ -180,19 +185,23 @@ Note that those with default value `missing` will be sampled if not specified.
     # to allow Zygote.jl/reverse-mode AD compatibility.
     X = TV(undef, (num_regions, num_times))
 
-    X[:, 1] .= 0
+    X[:, 1:num_cond] = X_cond .+ ξ
 
-    for t = 2:num_times
+    for t = (num_cond + 1):num_times
+        # compute the index of the step this day is in
+        t_step = (t - num_cond - 1) ÷ days_per_step + 1
+
         # Flux matrix
-        Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
-        # Eq. (4) but we also add in the observed cases `C` at each time
+        # Eq. (4)
+        # offset t's to account for the extra conditioning days of Xt
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
         Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
-        μ = R[:, t] .* Z̃ₜ .+ ξ
+        μ = R[:, t_step] .* Z̃ₜ .+ ξ
         if eltype(X) <: Integer
             for i = 1:num_regions
                 X[i, t] ~ NegativeBinomial3(μ[i], ψ)
@@ -206,7 +215,7 @@ Note that those with default value `missing` will be sampled if not specified.
     end
 
     # Observe (if we're done imputing)
-    for t = num_impute:num_times
+    for t = (num_cond + 1):num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
 
@@ -215,10 +224,10 @@ Note that those with default value `missing` will be sampled if not specified.
         end
     end
 
-    return (R = R, X = X)
+    return (R = repeat(R, inner=(1,days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
-@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ)
+@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
     # oneminusρₜ = @. 1 - ρₜ
@@ -232,9 +241,11 @@ end
     res2 = kron(ρₜ', F_id)
     F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
-
     # Convolve `X` with `W`
     Z = Epimap.conv(X, W)
+    # Slice off the conditioning days
+    Z = Z[:, (num_cond+1):end]
+    X = X[:, (num_cond+1):end]
 
     # Compute `Z̃` for every time-step
     # This is equivalent to
@@ -257,29 +268,30 @@ end
 end
 
 
-@inline function _loglikelihood(C, X, D, ϕ, num_impute = 1)
+@inline function _loglikelihood(C, X, D, ϕ, num_cond)
     # Deal with potential numerical issues
     expected_positive_tests = Epimap.conv(X, D)
-
+    # Slice off the conditioning days
+    expected_positive_tests = expected_positive_tests[:, (num_cond+1):end]
+    C = C[:, (num_cond+1):end]
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests)
     return sum(Epimap.nbinomlogpdf3.(
-        expected_positive_tests[:, num_impute:end],
+        expected_positive_tests,
         ϕ,
-        T.(C[:, num_impute:end]) # conversion ensures precision is preserved
+        T.(C) # conversion ensures precision is preserved
     ))
 end
 
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
-    C, D, W,
+    C, D, W, X_cond,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
+    days_per_step = 1,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
-    num_impute = 10,
-    days_per_step = 1,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
     function logjoint(args)
@@ -295,8 +307,15 @@ function Epimap.make_logjoint(
 
         lp = zero(T)
 
+        # tack the conditioning X's back on to the samples
+        X = hcat(X_cond, X)
         num_regions = size(C, 1)
         num_times = size(C, 2)
+        num_cond = size(X_cond, 2)
+        num_infer = num_times - num_cond
+
+        @assert num_infer % days_per_step == 0
+        num_steps = num_infer ÷ days_per_step
 
         prev_infect_cutoff = length(W)
         test_delay_cutoff = length(D)
@@ -323,7 +342,7 @@ function Epimap.make_logjoint(
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
         lp += sum(normlogpdf.(E_vec))
-        E = reshape(E_vec, (num_regions, num_times))
+        E = reshape(E_vec, (num_regions, num_steps))
 
         # Get cholesky decomps using precomputed kernel matrices
         L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
@@ -331,7 +350,8 @@ function Epimap.make_logjoint(
 
         # Obtain the sample
         f = L_space * E * U_time
-        R = exp.(f)
+        # Repeat Rt to get Rt for every day in constant region
+        R = repeat(exp.(f), inner=(1, days_per_step))
 
         ### Flux ###
         # Flux parameters
@@ -356,7 +376,9 @@ function Epimap.make_logjoint(
         # Use bijector to transform to have support (0, 1) rather than ℝ.
         b_ρₜ = Bijectors.Logit{1, T}(T(0.0), T(1.0))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
-        lp += logpdf(transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
+        lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
+        # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
+        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
@@ -381,7 +403,7 @@ function Epimap.make_logjoint(
         #     # end
         #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
-        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ)
+        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
         #     # Observe
@@ -392,7 +414,7 @@ function Epimap.make_logjoint(
         #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         #     # end
         # end
-        lp += _loglikelihood(C, X, D, ϕ, num_impute)
+        lp += _loglikelihood(C, X, D, ϕ, num_cond)
 
         return lp
     end
