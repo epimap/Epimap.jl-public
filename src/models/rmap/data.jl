@@ -133,6 +133,7 @@ model = Rmap.rmap_naive(setup_args...)
 
 ## Keyword arguments
 - `days_per_step = 1`: specifies how many days to use per step (WARNING: does nothing at the moment)
+- `num_cond = 1`: specifies how many days at the start of the cases to compute approximate Xt for to condition on in the model.
 - `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
 - `test_delay_days = 21`: maximum number of days from infection to test
 - `presymptomdays = 2`: number of days in which the infection is discoverable
@@ -143,17 +144,21 @@ function setup_args(
     data,
     ::Type{T} = Float64;
     days_per_step = 1,
+    num_cond = 60,
     infection_cutoff = 30,
     test_delay_days = 21,
     presymptomdays = 2
 ) where {T}
-    (days_per_step != 1) && @warn "setting `days_per_step` to ≠ 1 has no effect at the moment"
+    # (days_per_step != 1) && @warn "setting `days_per_step` to ≠ 1 has no effect at the moment"
 
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
     # Convert `cases` into a matrix, removing the area-columns
     cases = Array(cases[:, Not(["Country", "Area name"])])
+    cases = cases[:,241:end] # TODO: proper parsing of what region of time we want to infer for. Temp: cut off the first 240 days to prevent issues with zero cases
     (num_regions, num_days) =  size(cases)
+    num_infer = num_days - num_cond
+    @assert num_infer % days_per_step == 0
 
     # TODO: should we "sub-sample" the infection and test delay profiles to account for `days_per_step`?
 
@@ -161,6 +166,12 @@ function setup_args(
     serial_intervals = serial_intervals[1:min(infection_cutoff, size(serial_intervals, 1)), :fit]
     normalize!(serial_intervals, 1) # re-normalize wrt. ℓ1-norm to ensure still sums to 1
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
+    mean_serial_intervals = sum((1:size(serial_intervals,1)) .* serial_intervals)
+    mean_serial_intervals_int = Int(mean_serial_intervals ÷ 1)
+    mean_serial_intervals_rem = mean_serial_intervals - mean_serial_intervals_int
+
+    # Precompute conditioning X approximation
+    X_cond = (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)] + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
 
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
     test_delay_profile = let a = 5.8, b = 0.948
@@ -181,7 +192,7 @@ function setup_args(
     ### Temporal kernel ###
     # TODO: make it this an argument?
     k_time = Matern12Kernel()
-    K_time = PDMat(kernelmatrix(k_time, 1:days_per_step:num_days))
+    K_time = PDMat(kernelmatrix(k_time, 1:days_per_step:num_infer))
 
     # Flux matrices
     F_id = Diagonal(ones(num_regions))
@@ -193,12 +204,14 @@ function setup_args(
         C = cases,
         D = test_delay_profile,
         W = serial_intervals,
+        X_cond = X_cond,
         F_id = F_id,
         F_out = F_out,
         F_in = F_in,
         K_time = K_time,
         K_spatial = K_spatial,
-        K_local = K_local
+        K_local = K_local,
+        days_per_step = days_per_step,
     )
 
     # 
