@@ -7,7 +7,9 @@ Adaptor which will do its best to convert the storage-type into `T<:AbstractFloa
 
 ## Examples
 ```jldoctest
-julia> using Epimap, Adapt
+julia> using Epimap
+
+julia> using Epimap.Adapt
 
 julia> x = (A = [1, 2, 3], B = [1.0, 2.0, 3.0], C = [1f0, 2f0, 3f0], a = 1, b = 1.0, c = 1f0);
 

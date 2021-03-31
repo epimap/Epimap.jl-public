@@ -4,7 +4,8 @@ import Random
 import StatsFuns, SpecialFunctions
 import NNlib
 
-using Turing, Distributions
+using Reexport
+@reexport using Turing, Distributions
 using DocStringExtensions
 
 export Rmap,

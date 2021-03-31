@@ -53,7 +53,7 @@ Julia implementation of `StatsFuns.nbinomlogpdf`.
 
 ## Examples
 ```jldoctest
-julia> using Epimap, Distributions
+julia> using Epimap
 
 julia> p = 0.5; r = 10; k = 5;
 
