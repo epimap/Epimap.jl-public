@@ -154,7 +154,7 @@ function setup_args(
 
     # Convert `cases` into a matrix, removing the area-columns
     cases = Array(cases[:, Not(["Country", "Area name"])])
-    cases = cases[:,241:end] # TODO: proper parsing of what region of time we want to infer for. Temp: cut off the first 240 days to prevent issues with zero cases
+    cases = cases[:,241:420] # TODO: proper parsing of what region of time we want to infer for. Temp: cut off the first 240 days to prevent issues with zero cases
     (num_regions, num_days) =  size(cases)
     num_infer = num_days - num_cond
     @assert num_infer % days_per_step == 0

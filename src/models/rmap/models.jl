@@ -138,7 +138,7 @@ Note that those with default value `missing` will be sampled if not specified.
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
 
     # Weekly variation
-    weekly_case_variation ~ Dirichlet(7, 5.0)
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5.0 * ones(7))
 
     ### GP prior ###
     # Length scales
@@ -337,7 +337,7 @@ function Epimap.make_logjoint(
         lp += sum(truncatednormlogpdf.(μ₀, σ₀, ϕ, lb, ub))
 
         # Weekly case variation
-        lp += logpdf(Dirichlet(7, 5.0), weekly_case_variation)
+        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5.0 * ones(7)), weekly_case_variation)
 
         ### GP prior ###
         # Length scales

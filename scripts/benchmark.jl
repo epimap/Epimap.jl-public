@@ -26,7 +26,7 @@ default_args = (
 )
 
 # Construct the model arguments from data
-setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data, days_per_step=4), default_args);
+setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data, days_per_step=4, num_cond=60), default_args);
 
 # Instantiate model
 m = Rmap.rmap_naive(setup_args...);
