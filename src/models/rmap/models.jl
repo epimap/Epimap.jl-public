@@ -197,8 +197,9 @@ Note that those with default value `missing` will be sampled if not specified.
         # Flux matrix
         Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
-        # Eq. (4) but we also add in the observed cases `C` at each time
-        ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1) # offset t's to account for the extra conditioning days of Xt
+        # Eq. (4)
+        # offset t's to account for the extra conditioning days of Xt
+        ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
         Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
@@ -246,7 +247,7 @@ end
 
     # Convolve `X` with `W`
     Z = Epimap.conv(X, W)
-    # Slice off the conditinoning days
+    # Slice off the conditioning days
     Z = Z[:, (num_cond+1):end]
     X = X[:, (num_cond+1):end]
 
@@ -274,7 +275,7 @@ end
 @inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
     # Deal with potential numerical issues
     expected_positive_tests = Epimap.conv(X, D)
-    # Slice off the conditinoning days
+    # Slice off the conditioning days
     expected_positive_tests = expected_positive_tests[:, (num_cond+1):end]
     # Repeat and clip the weekly case variation to cover the whole time, and for every region
     weekly_case_variation = repeat(weekly_case_variation, outer=((size(expected_positive_tests, 2) ÷ 7) + 1, size(C, 1)))[1:size(expected_positive_tests, 2),:]
@@ -363,7 +364,7 @@ function Epimap.make_logjoint(
         # Obtain the sample
         f = L_space * E * U_time
         # Repeat Rt to get Rt for every day in constant region
-        R = repeat(exp.(f), inner=(1,days_per_step))
+        R = repeat(exp.(f), inner=(1, days_per_step))
 
         ### Flux ###
         # Flux parameters
@@ -390,7 +391,7 @@ function Epimap.make_logjoint(
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
         # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
-        ρₜ = repeat(ρₜ, inner=(days_per_step))
+        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)

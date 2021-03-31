@@ -144,12 +144,11 @@ function setup_args(
     data,
     ::Type{T} = Float64;
     days_per_step = 1,
-    num_cond = 60,
+    num_cond = 1,
     infection_cutoff = 30,
     test_delay_days = 21,
     presymptomdays = 2
 ) where {T}
-    # (days_per_step != 1) && @warn "setting `days_per_step` to ≠ 1 has no effect at the moment"
 
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
@@ -160,14 +159,12 @@ function setup_args(
     num_infer = num_days - num_cond
     @assert num_infer % days_per_step == 0
 
-    # TODO: should we "sub-sample" the infection and test delay profiles to account for `days_per_step`?
-
     # Serial intervals / infection profile
     serial_intervals = serial_intervals[1:min(infection_cutoff, size(serial_intervals, 1)), :fit]
     normalize!(serial_intervals, 1) # re-normalize wrt. ℓ1-norm to ensure still sums to 1
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
     mean_serial_intervals = sum((1:size(serial_intervals,1)) .* serial_intervals)
-    mean_serial_intervals_int = Int(mean_serial_intervals ÷ 1)
+    mean_serial_intervals_int = Int(floor(mean_serial_intervals))
     mean_serial_intervals_rem = mean_serial_intervals - mean_serial_intervals_int
 
     # Precompute conditioning X approximation
