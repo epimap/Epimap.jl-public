@@ -137,6 +137,9 @@ Note that those with default value `missing` will be sampled if not specified.
     ψ ~ 𝒩₊(0, 5)
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
 
+    # Weekly variation
+    weekly_case_variation ~ Dirichlet(7, 5.0)
+
     ### GP prior ###
     # Length scales
     ρ_spatial ~ 𝒩₊(0, 5)
@@ -217,6 +220,7 @@ Note that those with default value `missing` will be sampled if not specified.
     for t = (num_cond + 1):num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
+        expected_positive_tests = 7.0 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
 
         for i = 1:num_regions
             C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
@@ -267,11 +271,17 @@ end
 end
 
 
-@inline function _loglikelihood(C, X, D, ϕ, num_cond)
+@inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
     # Deal with potential numerical issues
     expected_positive_tests = Epimap.conv(X, D)
     # Slice off the conditinoning days
     expected_positive_tests = expected_positive_tests[:, (num_cond+1):end]
+    # Repeat and clip the weekly case variation to cover the whole time, and for every region
+    weekly_case_variation = repeat(weekly_case_variation, outer=((size(expected_positive_tests, 2) ÷ 7) + 1, size(C, 1)))[1:size(expected_positive_tests, 2),:]
+    # Flip the matrix as its the wrong way around
+    weekly_case_variation = transpose(weekly_case_variation)
+    expected_positive_tests = expected_positive_tests .* weekly_case_variation
+
     C = C[:, (num_cond+1):end]
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests)
@@ -294,7 +304,7 @@ function Epimap.make_logjoint(
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
     function logjoint(args)
-        @unpack ψ, ϕ, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+        @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
 
         T = eltype(ψ) # TODO: Should probably find a better way to deal with this
 
@@ -324,6 +334,9 @@ function Epimap.make_logjoint(
         lp = truncatednormlogpdf(μ₀, σ₀, ψ, lb, ub)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
         lp += sum(truncatednormlogpdf.(μ₀, σ₀, ϕ, lb, ub))
+
+        # Weekly case variation
+        lp += logpdf(Dirichlet(7, 5.0), weekly_case_variation)
 
         ### GP prior ###
         # Length scales
@@ -413,7 +426,7 @@ function Epimap.make_logjoint(
         #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         #     # end
         # end
-        lp += _loglikelihood(C, X, D, ϕ, num_cond)
+        lp += _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
 
         return lp
     end
