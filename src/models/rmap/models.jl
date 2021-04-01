@@ -341,7 +341,7 @@ function Epimap.make_logjoint(
         lp += sum(truncatednormlogpdf.(μ₀, σ₀, ϕ, lb, ub))
 
         # Weekly case variation
-        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5.0 * ones(7)), weekly_case_variation)
+        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
 
         ### GP prior ###
         # Length scales
