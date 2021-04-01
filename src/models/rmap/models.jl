@@ -138,7 +138,7 @@ Note that those with default value `missing` will be sampled if not specified.
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
 
     # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5.0 * ones(7))
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
 
     ### GP prior ###
     # Length scales
