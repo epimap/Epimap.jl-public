@@ -221,7 +221,9 @@ Note that those with default value `missing` will be sampled if not specified.
     for t = (num_cond + 1):num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-        expected_positive_tests = 7.0 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+        expected_positive_tests_weekly_adj = (
+            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+        )
 
         for i = 1:num_regions
             C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
