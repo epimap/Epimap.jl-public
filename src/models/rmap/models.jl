@@ -272,7 +272,9 @@ end
 end
 
 
-@inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
+@inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
+    num_regions = size(C, 1)
+    num_infer = size(X, 2) - num_cond
     # Deal with potential numerical issues
     expected_positive_tests = Epimap.conv(X, D)
     # Slice off the conditioning days
