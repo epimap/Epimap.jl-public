@@ -279,10 +279,10 @@ end
     expected_positive_tests = Epimap.conv(X, D)
     # Slice off the conditioning days
     expected_positive_tests = expected_positive_tests[:, (num_cond+1):end]
-    # Repeat and clip the weekly case variation to cover the whole time, and for every region
-    weekly_case_variation = repeat(weekly_case_variation, outer=((size(expected_positive_tests, 2) ÷ 7) + 1, size(C, 1)))[1:size(expected_positive_tests, 2),:]
-    # Flip the matrix as its the wrong way around
-    weekly_case_variation = transpose(weekly_case_variation)
+    # Repeat one too many times and then extract the desired section `1:num_regions`
+    weekly_case_variation = transpose(
+        repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
+    )
     expected_positive_tests = expected_positive_tests .* weekly_case_variation
 
     C = C[:, (num_cond+1):end]
