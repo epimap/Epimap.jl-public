@@ -1,4 +1,4 @@
-using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats, Adapt
+using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats, Adapt, Dates
 
 
 function Base.map(f, d::Dict)
@@ -137,25 +137,58 @@ model = Rmap.rmap_naive(setup_args...)
 - `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
 - `test_delay_days = 21`: maximum number of days from infection to test
 - `presymptomdays = 2`: number of days in which the infection is discoverable
+- `first_day_modelled = nothing`: Date of first day to model
+- `last_day_modelled = nothing`: Date of last day to model
+- `steps_modelled = nothing`: Number of steps to model
+- `end_days_ignored = 0`: Number fo days at the end of the data to ignore
+- `days_per_step = 7`: Number fo days in a single timestep
+- `conditioning_days = 30`: Number of conditioning days to use before the start of the modelling
+
+N.b. you do not specify all of the arguments after first_day_modelled, only a combination that allows theperiods to use to be computed.
+Valid combinations are:
+- first_day_modelled + last_day_modelled, with (first_day_modelled + last_day_modelled) % days_per_step == 0
+- first_day_modelled + steps_modelled
+- last_day_modelled + steps_modelled
+- steps_modelled - will assume you want to model the most recent data minus end_days_ignored
 
 """
 function setup_args(
     ::typeof(rmap_naive),
     data,
     ::Type{T} = Float64;
-    days_per_step = 1,
-    num_cond = 1,
     infection_cutoff = 30,
     test_delay_days = 21,
-    presymptomdays = 2
+    presymptomdays = 2, 
+    first_day_modelled = nothing, 
+    last_day_modelled = nothing, 
+    steps_modelled = nothing, 
+    end_days_ignored = 0, 
+    days_per_step = 7,
+    conditioning_days = 30
 ) where {T}
 
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
     # Convert `cases` into a matrix, removing the area-columns
-    cases = Array(cases[:, Not(["Country", "Area name"])])
-    cases = cases[:,241:420] # TODO: proper parsing of what region of time we want to infer for. Temp: cut off the first 240 days to prevent issues with zero cases
+    
+
+    cases = cases[:, Not(["Country", "Area name"])]
+    @unpack conditioning_days, modelled_days = process_dates_modelled(
+        Date.(names(cases), "y-m-d"),
+        first_day_modelled, 
+        last_day_modelled, 
+        steps_modelled, 
+        end_days_ignored, 
+        days_per_step,
+        conditioning_days
+    )
+    conditioning_days = Dates.format.(conditioning_days, "yyyy-mm-dd")
+    modelled_days = Dates.format.(modelled_days, "yyyy-mm-dd")
+    cases = cases[:, vcat(conditioning_days, modelled_days)]
+    cases = Array(cases)
+
     (num_regions, num_days) =  size(cases)
+    num_cond = size(conditioning_days)[1]
     num_infer = num_days - num_cond
     @assert num_infer % days_per_step == 0
 
@@ -213,4 +246,41 @@ function setup_args(
 
     # 
     return adapt(Epimap.FloatMaybeAdaptor{T}(), result)
+end
+
+
+function process_dates_modelled(
+    dates, 
+    first_day_modelled = nothing, 
+    last_day_modelled = nothing, 
+    steps_modelled = nothing, 
+    end_days_ignored = 0, 
+    days_per_step = 7,
+    conditioning_days = 30
+)
+    dates = dates[1:end-end_days_ignored]
+
+    if (isnothing(first_day_modelled) & ~isnothing(last_day_modelled) & ~isnothing(steps_modelled))
+        last_day_index = findall(d->d==last_day_modelled, dates)[1]
+        first_day_index = last_day_index - (steps_modelled * days_per_step) + 1
+    elseif (~isnothing(first_day_modelled) & isnothing(last_day_modelled) & ~isnothing(steps_modelled))
+        first_day_index = findall(d->d==first_day_modelled, dates)[1]
+        last_day_index = first_day_index + (steps_modelled * days_per_step) - 1
+    elseif (~isnothing(first_day_modelled) & ~isnothing(last_day_modelled) & isnothing(steps_modelled))
+        last_day_index = findall(d->d==last_day_modelled, dates)[1]
+        first_day_index = findall(d->d==first_day_modelled, dates)[1]
+        @assert (last_day_index - first_day_index) % days_per_step == 0
+        steps_modelled = (last_day_index - first_day_index) ÷ days_per_step 
+    elseif (isnothing(first_day_modelled) & isnothing(last_day_modelled) & ~isnothing(steps_modelled))
+        last_day_index = size(dates)[1]
+        first_day_index = last_day_index - (steps_modelled * days_per_step) + 1
+    else
+        # Throw error
+    end
+
+    @assert last_day_index <= size(dates)[1]
+    @assert first_day_index - conditioning_days >= 1
+
+    return (conditioning_days=dates[(first_day_index - conditioning_days):(first_day_index - 1)], modelled_days=dates[first_day_index:last_day_index])
+
 end
