@@ -1,8 +1,9 @@
 using Epimap
 using Epimap.Turing
 
+
 @testset "Rmap" begin
-    data = let rmapdir = getenv(ENV, "EPIMAP_RMAP_DATADIR", "")
+    data = let rmapdir = get(ENV, "EPIMAP_RMAP_DATADIR", "")
         if !isempty(rmapdir)
             Rmap.load_data(rmapdir)
         else
@@ -27,7 +28,7 @@ using Epimap.Turing
         end
 
         # Verify that the radius specified is respected.
-        # Manchester and Birmingham are 112150.26 apart in `Haversine` distance.
+        # Manchester and Birmingham are slightly more than 112km apart.
         radius = 1.12100
         filtered_data = Rmap.filter_areas_by_distance(
             data, ["Manchester"];
@@ -44,6 +45,11 @@ using Epimap.Turing
     end
 
     @testset "model" begin
+        data = Rmap.filter_areas_by_distance(
+            data, "Manchester",
+            radius=0.11
+        )
+
         # Construct the model arguments from data
         setup_args = Rmap.setup_args(Rmap.rmap_naive, data; num_cond = 10)
 
@@ -62,8 +68,9 @@ using Epimap.Turing
         m = Rmap.rmap_naive(args...);
 
         # HACK: using Turing to get a sample from the prior
+        spl = DynamicPPL.SampleFromPrior()
         var_info = DynamicPPL.VarInfo(m);
-        θ = var_info[DynamicPPL.SampleFromPrior()]
+        θ = var_info[spl]
 
         # `make_logjoint`
         logπ = Epimap.make_logjoint(Rmap.rmap_naive, args...)
@@ -87,6 +94,8 @@ using Epimap.Turing
             @test m.args[k] == getfield(logπ, k)
         end
 
-        @test DynamicPPL.getlogp(var_info) ≈ logπ(θ_nt)
+
+        # Pretty "high" `atol` since we're in log-space + it's likely that `logπ` is numerically more accurate
+        @test DynamicPPL.getlogp(var_info) ≈ logπ(θ_nt) atol=100
     end
 end
