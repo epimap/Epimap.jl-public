@@ -1,7 +1,14 @@
 using Epimap
+using Epimap.Turing
 
 @testset "Rmap" begin
-    data = Rmap.load_data()
+    data = let rmapdir = getenv(ENV, "EPIMAP_RMAP_DATADIR", "")
+        if !isempty(rmapdir)
+            Rmap.load_data(rmapdir)
+        else
+            Rmap.load_data()
+        end
+    end
 
     @testset "filter_areas_by_distance" begin
         # If we allow number of regions to be all of them, then we should recover
@@ -35,5 +42,43 @@ using Epimap
         )
         @test "Birmingham" ∈ filtered_data.area_names
     end
-end
 
+    @testset "model" begin
+        # Construct the model arguments from data
+        setup_args = Rmap.setup_args(Rmap.rmap_naive, data; num_cond = 10)
+
+        # Arguments not related to the data which are to be set up
+        default_args = (
+            ρ_spatial = 10.0,
+            ρ_time = 0.1,
+            σ_spatial = 0.1,
+            σ_local = 0.1,
+            σ_ξ = 1.0
+        )
+
+        args = merge(setup_args, default_args)
+
+        # Instantiate model
+        m = Rmap.rmap_naive(args...);
+
+        # HACK: using Turing to get a sample from the prior
+        var_info = DynamicPPL.VarInfo(m);
+        θ = var_info[DynamicPPL.SampleFromPrior()]
+
+        # `make_logjoint`
+        logπ = Epimap.make_logjoint(Rmap.rmap_naive, args...)
+        num_regions = size(data.cases, 1);
+        θ_nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
+            if startswith(string(first(ks)), "X")
+                # Add back in the first column since it's not inferred
+                reshape(v, (num_regions, :))
+            elseif length(v) == 1
+                first(v)
+            else
+                v
+            end
+        end
+
+        @test DynamicPPL.getlogp(var_info) ≈ logπ(θ_nt)
+    end
+end
