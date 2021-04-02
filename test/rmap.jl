@@ -45,6 +45,9 @@ using Epimap.Turing
     end
 
     @testset "model" begin
+        rng = StableRNG(42);
+        num_repeats = 100
+
         data = Rmap.filter_areas_by_distance(
             data, "Manchester",
             radius=0.11
@@ -67,26 +70,8 @@ using Epimap.Turing
         # Instantiate model
         m = Rmap.rmap_naive(args...);
 
-        # HACK: using Turing to get a sample from the prior
-        spl = DynamicPPL.SampleFromPrior()
-        var_info = DynamicPPL.VarInfo(m);
-        θ = var_info[spl]
-
         # `make_logjoint`
         logπ = Epimap.make_logjoint(Rmap.rmap_naive, args...)
-
-        # Get something we can pass to `make_logjoint`
-        num_regions = size(data.cases, 1);
-        θ_nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
-            if startswith(string(first(ks)), "X")
-                # Add back in the first column since it's not inferred
-                reshape(v, (num_regions, :))
-            elseif length(v) == 1
-                first(v)
-            else
-                v
-            end
-        end
 
         # Verify that they have received the same arguments
         # Remove the type-parameters from the model
@@ -94,8 +79,32 @@ using Epimap.Turing
             @test m.args[k] == getfield(logπ, k)
         end
 
+        # Check average difference
+        spl = DynamicPPL.SampleFromPrior()
+        results = []
+
+        for i = 1:num_repeats
+            var_info = DynamicPPL.VarInfo(rng, m);
+            θ = var_info[spl]
+
+            # Get something we can pass to `make_logjoint`
+            num_regions = size(data.cases, 1);
+            θ_nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
+                if startswith(string(first(ks)), "X")
+                    # Add back in the first column since it's not inferred
+                    reshape(v, (num_regions, :))
+                elseif length(v) == 1
+                    first(v)
+                else
+                    v
+                end
+            end
+
+            diff = DynamicPPL.getlogp(var_info) ≈ logπ(θ_nt)
+            push!(results, abs(diff))
+        end
 
         # Pretty "high" `atol` since we're in log-space + it's likely that `logπ` is numerically more accurate
-        @test DynamicPPL.getlogp(var_info) ≈ logπ(θ_nt) atol=100
+        @test mean(results) ≤ 10
     end
 end
