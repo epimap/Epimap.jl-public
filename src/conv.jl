@@ -18,7 +18,8 @@ for f in [:conv_fft, :conv_dsp]
 end
 
 """
-    conv_nnlib(x, w)
+    conv_nnlib(x::AbstractVector, w::AbstractVector)
+    conv_nnlib(x::AbstractMatrix, w::AbstractVector)
 
 Convolves `x` with filter/window `w` using `NNlib.conv`.
 
