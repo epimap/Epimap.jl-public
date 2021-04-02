@@ -211,7 +211,7 @@ function setup_args(
 
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
     test_delay_profile = let a = 5.8, b = 0.948
-        tmp = cdf(Gamma(a, b), 1:(test_delay_days - presymptomdays))
+        tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
         tmp ./= tmp[end]
         tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
         vcat(zeros(presymptomdays), tmp)
