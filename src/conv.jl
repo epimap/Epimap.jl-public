@@ -32,7 +32,7 @@ function conv_nnlib(x::AbstractVector, w::AbstractVector)
     # HACK: Honestly don't understand why in the case of 1D convolution we only
     # want padding to be either 1d or 2d, not 3d. But it complains if we don't
     # and it get's the correct result.
-    return NNlib.conv(x_arr, w_arr; pad = size(w_arr, 1) .- 1)
+    return NNlib.conv(x_arr, w_arr; pad = (size(w_arr, 1) - 1, 0))[:, 1, 1]
 end
 
 # NOTE: we treat the input as 
