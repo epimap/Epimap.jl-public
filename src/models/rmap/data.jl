@@ -137,24 +137,22 @@ all floats to `Float32` rather than the default `Float64`.
 - `data`: as returned by [`load_data`](@ref)
 
 ## Keyword arguments
-- `days_per_step = 1`: specifies how many days to use per step
-- `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
-- `test_delay_days = 21`: maximum number of days from infection to test
-- `presymptomdays = 2`: number of days in which the infection is discoverable
-- `first_day_modelled = nothing`: Date of first day to model
-- `last_day_modelled = nothing`: Date of last day to model
-- `steps_modelled = nothing`: Number of steps to model
-- `end_days_ignored = 0`: Number fo days at the end of the data to ignore
-- `days_per_step = 7`: Number of days in a single timestep
-- `conditioning_days = 30`: Number of conditioning days to use before the start of the modelling
+- `days_per_step = 1`: specifies how many days to use per step.
+- `infection_cutoff = 30`: number of previous timesteps which can cause
+   infection on current timestep.
+- `test_delay_days = 21`: maximum number of days from infection to test.
+- `presymptomdays = 2`: number of days in which the infection is discoverable.
+- `first_date = nothing`: date of first day to model.
+- `last_date = nothing`: date of last day to model.
+- `num_steps = nothing`: number of steps to model.
+- `end_days_ignored = 0`: number of days at the end of the data to ignore.
+- `timestep = Week(1)`: period of time between steps to model.
+- `num_condition_days = 30`: number of conditioning days to use before the start of the
+  modelling. Specifices how many to use in `X_cond` in the return-value.
 
-N.b. you do not specify all of the arguments after `first_day_modelled`,
-only a combination that allows the periods to use to be computed.
-Valid combinations are:
-- `first_day_modelled` + `last_day_modelled`, with `(first_day_modelled + last_day_modelled) % days_per_step == 0`
-- `first_day_modelled` + `steps_modelled`
-- `last_day_modelled` + `steps_modelled`
-- `steps_modelled` - will assume you want to model the most recent data minus `end_days_ignored`
+## Notes
+- The dates used for conditioning and modelling will be computed by [`split_dates`](@ref).
+  See its documentation for more information how exactly this is done.
 
 ## Examples
 This allows one to do the following
@@ -191,40 +189,42 @@ function setup_args(
     infection_cutoff = 30,
     test_delay_days = 21,
     presymptomdays = 2, 
-    first_day_modelled = nothing, 
-    last_day_modelled = nothing, 
-    steps_modelled = nothing, 
-    end_days_ignored = 0, 
-    days_per_step = 7,
-    conditioning_days = 30
+    first_date = nothing, 
+    last_date = nothing, 
+    num_steps = nothing, 
+    num_end_days_ignore = 0, 
+    timestep = Week(1),
+    num_condition_days = 30
 ) where {T}
-
+    days_per_step = Dates.days(timestep)
+    
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
     # Convert `cases` into a matrix, removing the area-columns
     cases = cases[:, Not(["Country", "Area name"])]
-    conditioning_days, modelled_days = process_dates_modelled(
-        Date.(names(cases), "y-m-d"),
-        first_day_modelled, 
-        last_day_modelled, 
-        steps_modelled, 
-        end_days_ignored, 
-        days_per_step,
-        conditioning_days
+    dates_str = names(cases)[1:end - num_end_days_ignore]
+    dates_condition, dates_model = split_dates(
+        Date.(dates_str, "y-m-d");
+        first_date = first_date,
+        last_date = last_date,
+        num_steps = num_steps,
+        timestep = timestep,
+        num_condition_days = num_condition_days
     )
-    conditioning_days = Dates.format.(conditioning_days, "yyyy-mm-dd")
-    modelled_days = Dates.format.(modelled_days, "yyyy-mm-dd")
-    cases = cases[:, vcat(conditioning_days, modelled_days)]
+    dates_condition_str = Dates.format.(dates_condition, "yyyy-mm-dd")
+    dates_model_str = Dates.format.(dates_model, "yyyy-mm-dd")
+    cases = cases[:, vcat(dates_condition_str, dates_model_str)]
     cases = Array(cases)
 
     (num_regions, num_days) =  size(cases)
-    num_cond = size(conditioning_days)[1]
+    num_cond = size(dates_condition, 1)
     num_infer = num_days - num_cond
-    @assert num_infer % days_per_step == 0
+    @assert num_infer % days_per_step == 0 "$(num_infer) not divisible by $(days_per_step)"
 
     # Serial intervals / infection profile
     serial_intervals = serial_intervals[1:min(infection_cutoff, size(serial_intervals, 1)), :fit]
-    normalize!(serial_intervals, 1) # re-normalize wrt. ℓ1-norm to ensure still sums to 1
+    # re-normalize wrt. ℓ1-norm to ensure still sums to 1
+    normalize!(serial_intervals, 1)
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
     mean_serial_intervals = sum((1:size(serial_intervals,1)) .* serial_intervals)
     mean_serial_intervals_int = Int(floor(mean_serial_intervals))
@@ -281,41 +281,97 @@ function setup_args(
     return adapt(Epimap.FloatMaybeAdaptor{T}(), result)
 end
 
+# TODO: Move out of `Rmap` module since it can be useful for other parts.
+"""
+    split_dates(dates; kwargs...)
 
-function process_dates_modelled(
-    dates, 
-    first_day_modelled = nothing, 
-    last_day_modelled = nothing, 
-    steps_modelled = nothing, 
-    end_days_ignored = 0, 
-    days_per_step = 7,
-    conditioning_days = 30
+Split `dates` into days to condition on and days to be inferred/modelled.
+
+By default chooses days to be inferred/modelled as longest period
+divisible by `days_per_step`.
+
+## Keyword arguments
+- `first_date = nothing`: the first date which will be inferred.
+- `last_date = nothing`: the last date which will be inferred.
+- `num_steps = nothing`: number of time-steps to include in period to infer.
+  Only makes sense if either `first_date` or `last_date` is specified.
+- `timestep = Week(1)`: length between each . Checks will be made to
+  ensure that the period to be inferred is divisible by `days_per_step`.
+- `num_condition_days = 30`: number of days to condition on, i.e. not to be
+  learned by the model.
+"""
+function split_dates(
+    dates;
+    first_date = nothing,
+    last_date = nothing,
+    num_steps = nothing,
+    timestep = Week(1),
+    num_condition_days = 30
 )
-    dates = dates[1:end-end_days_ignored]
+    days_per_step = Dates.days(timestep)
 
-    if (isnothing(first_day_modelled) & ~isnothing(last_day_modelled) & ~isnothing(steps_modelled))
-        last_day_index = findall(d->d==last_day_modelled, dates)[1]
-        first_day_index = last_day_index - (steps_modelled * days_per_step) + 1
-    elseif (~isnothing(first_day_modelled) & isnothing(last_day_modelled) & ~isnothing(steps_modelled))
-        first_day_index = findall(d->d==first_day_modelled, dates)[1]
-        last_day_index = first_day_index + (steps_modelled * days_per_step) - 1
-    elseif (~isnothing(first_day_modelled) & ~isnothing(last_day_modelled) & isnothing(steps_modelled))
-        last_day_index = findall(d->d==last_day_modelled, dates)[1]
-        first_day_index = findall(d->d==first_day_modelled, dates)[1]
-        @assert (last_day_index - first_day_index) % days_per_step == 0
-        steps_modelled = (last_day_index - first_day_index) ÷ days_per_step 
-    elseif (isnothing(first_day_modelled) & isnothing(last_day_modelled) & ~isnothing(steps_modelled))
-        last_day_index = size(dates)[1]
-        first_day_index = last_day_index - (steps_modelled * days_per_step) + 1
+    if isnothing(first_date) & isnothing(last_date) & isnothing(num_steps)
+        first_date = dates[num_condition_days + 1]
+        last_available_day = dates[end]
+        num_steps = Dates.days(last_available_day - first_date) ÷ days_per_step
+        # Subtract 1 day since we include data for `last_date`
+        last_date = first_date + Day((num_steps * days_per_step) - 1)
+    elseif ~isnothing(first_date) & isnothing(last_date) & isnothing(num_steps)
+        last_available_day = dates[end]
+        num_steps = Dates.days(last_available_day - first_date) ÷ days_per_step
+        # Subtract 1 day since we include data for `last_date`
+        last_date = first_date + Day((num_steps * days_per_step) - 1)
+    elseif isnothing(first_date) & ~isnothing(last_date) & isnothing(num_steps)
+        # Only `last_date` is known => choose longest possible period that ends
+        # on `last_date`.
+        first_date_available = dates[num_condition_days + 1]
+        num_steps = Dates.days(last_date - first_date_available) ÷ days_per_step
+        first_date = last_date - Day(days_per_step * num_steps - 1)
+    elseif isnothing(first_date) & ~isnothing(last_date) & ~isnothing(num_steps)
+        first_date = last_date - Day((num_steps * days_per_step) - 1)
+    elseif ~isnothing(first_date) & isnothing(last_date) & ~isnothing(num_steps)
+        last_date = first_date + Day((num_steps * days_per_step) - 1)
+    elseif isnothing(first_date) & isnothing(last_date) & ~isnothing(num_steps)
+        last_date = dates[end]
+        first_date = last_date - Day((num_steps * days_per_step) - 1)
+    elseif ~isnothing(first_date) & ~isnothing(last_date)
+        # If we both `first_date` and `last_date` are provided, we ignore `num_steps`.
+        @warn "ignoring `num_steps` since both `first_date` and `last_date` are given"
+        period = first_date:Day(1):last_date
+        num_steps = length(period) ÷ days_per_step
+        # If the provided `first_date` and `last_date` are provided BUT they don't
+        # satisfy the divisibility constraint, we act like `first_date` wasn't provided
+        # and choose the largest possible period ending on `last_date`.
+        if length(period) % days_per_step != 0
+            first_date_available = dates[num_condition_days + 1]
+            num_steps = Dates.days(last_date - first_date_available) ÷ days_per_step
+            first_date = last_date - Day(days_per_step * num_steps - 1)
+            new_period = first_date:Day(1):last_date
+            @warn "period $(period) not divisible by $(days_per_step); choosing $(new_period) instead"
+        end
     else
-        # Throw error
+        throw(ArgumentError("don't know what to do with the arguments"))
     end
 
-    @assert last_day_index <= size(dates)[1]
-    @assert first_day_index - conditioning_days >= 1
+    # Date to condition on is either `num_condition_days` before `first_date`
+    # or the very first day available; we choose whichever is most recent.
+    condition_start_date = max(first_date - Day(num_condition_days), dates[1])
+    if first_date - Day(num_condition_days) < condition_start_date
+        # Warn user if the above `max` chose `dates[1]` instead of following the desired
+        # `num_condition_days`.
+        @warn "Attempted to condition on days prior to available dates; starting conditioning from $(dates[1]) instead"
+    end
 
-    return (conditioning_days=dates[(first_day_index - conditioning_days):(first_day_index - 1)], modelled_days=dates[first_day_index:last_day_index])
+    @assert last_date ≤ dates[end] "`last_date` is out-of-bounds"
+    @assert first_date ≥ dates[1] "`first_date` is out-of-bounds"
+    @assert first_date > condition_start_date "`first_date` is within the conditioning-period"
+
+    return (
+        condition=condition_start_date:Day(1):first_date - Day(1),
+        model=first_date:Day(1):last_date
+    )
 end
+
 
 """
     $(SIGNATURES)
