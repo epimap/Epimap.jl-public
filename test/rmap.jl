@@ -54,7 +54,10 @@ using Epimap.Turing
         )
 
         # Construct the model arguments from data
-        setup_args = Rmap.setup_args(Rmap.rmap_naive, data; num_cond = 10)
+        num_cond = 10
+        setup_args = Rmap.setup_args(Rmap.rmap_naive, data; num_cond = num_cond)
+
+        @test size(setup_args.X_cond, 2) == num_cond
 
         # Arguments not related to the data which are to be set up
         default_args = (
