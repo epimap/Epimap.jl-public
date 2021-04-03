@@ -1,4 +1,5 @@
 using Epimap
+using StableRNGs
 using Test
 
 @testset "Epimap.jl" begin
