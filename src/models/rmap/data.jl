@@ -1,9 +1,29 @@
-using DrWatson, CSV, DataFrames, RemoteFiles, UnPack, KernelFunctions, LinearAlgebra, PDMats, Adapt, Dates
-
+using DrWatson,
+    CSV,
+    DataFrames,
+    RemoteFiles,
+    UnPack,
+    KernelFunctions,
+    LinearAlgebra,
+    PDMats,
+    Adapt,
+    Distances,
+    DocStringExtensions,
+    Dates
 
 function Base.map(f, d::Dict)
     pairs = map(f, zip(keys(d), values(d)))
     return Dict(pairs)
+end
+
+function distance_from_areas(metric, areas; units = 100_000)
+    area_names = areas[:, "area"]
+    coords = Array(areas[:, [:longitude, :latitude]])'
+    D = pairwise(metric, coords) ./ units # units are 100km
+    return DataFrame(
+        hcat(area_names, D),
+        vcat(["Column1"], area_names)
+    )
 end
 
 # TODO: make this nicer
@@ -15,11 +35,12 @@ Loads the Rmap data from the data-processing project and returns a named tuple o
 `rmap_path` can be a local (absolute) path (which should then be prefixed by `"file://"`), or it can be
 a direct link to the data-folder in the repository.
 """
-function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data"))
+function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data"); metric = nothing)
     # Download files if not present
     @RemoteFileSet datasets "Rmap data" begin
         cases = @RemoteFile "$(rmap_path)/cases.csv" dir=datadir("rmap") updates=:daily
         areas = @RemoteFile "$(rmap_path)/areas.csv" dir=datadir("rmap") updates=:daily
+        distances = @RemoteFile "$(rmap_path)/distances.csv" dir=datadir("rmap") updates=:daily
         serial_intervals = @RemoteFile "$(rmap_path)/serial_interval.csv" dir=datadir("rmap") updates=:never
         traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv" dir=datadir("rmap") updates=:never
         traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv" dir=datadir("rmap") updates=:never
@@ -63,7 +84,7 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
         # First sort the dataframe according to names to ensure that we get consistent ordering
         df = sort(dataframes[name], colname)
         mask = ∈(valid_areas).(df[:, colname])
-        if startswith(string(name), "traffic_flux")
+        if startswith(string(name), "traffic_flux") || startswith(string(name), "distance")
             # For the traffic flux we need to ensure that we only extract those columns too.
             # Note that because also need to re-order the columns in the same manner, these
             # also needs to be sorted.
@@ -73,6 +94,14 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
         end
     end
 
+    # If `metric` is specified, e.g. `Haversine`, use that to compute the distances rather than use pre-computed ones.
+    if !isnothing(metric)
+        # Compute distance dataframe using the provided metric
+        @info "Computing distances using $(metric) instead of using pre-computed"
+        @info keys(dataframes)
+        dataframes[:distances] = distance_from_areas(metric, dataframes[:areas]; units = 100_000)
+    end
+
     # Convert into `NamedTuple` because nicer to work with
     data = DrWatson.dict2ntuple(dataframes)
 
@@ -80,13 +109,16 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
     data.cases[!, 3:end] = convert.(Int, data.cases[:, 3:end])
 
     # TODO: Make this a part of the test-suite instead.
+    # Verify that they're all aligned wrt. area names.
     @assert (
         data.areas[:, "area"] ==
         data.cases[:, "Area name"] ==
         data.traffic_flux_in[:, "Column1"] ==
         names(data.traffic_flux_in)[2:end] ==
         data.traffic_flux_out[:, "Column1"] ==
-        names(data.traffic_flux_out)[2:end]
+        names(data.traffic_flux_out)[2:end]==
+        data.distances[:, "Column1"] ==
+        names(data.distances)[2:end]
     ) "something went wrong with the sorting"
 
     return data
@@ -100,6 +132,31 @@ Converts `data` into a named tuple with order corresponding to `rmap_naive` cons
 `T` specifies which element type to use for the data, e.g. `T = Float32` will convert
 all floats to `Float32` rather than the default `Float64`.
 
+## Arguments
+- [`rmap_naive`](@ref)
+- `data`: as returned by [`load_data`](@ref)
+
+## Keyword arguments
+- `days_per_step = 1`: specifies how many days to use per step
+- `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
+- `test_delay_days = 21`: maximum number of days from infection to test
+- `presymptomdays = 2`: number of days in which the infection is discoverable
+- `first_day_modelled = nothing`: Date of first day to model
+- `last_day_modelled = nothing`: Date of last day to model
+- `steps_modelled = nothing`: Number of steps to model
+- `end_days_ignored = 0`: Number fo days at the end of the data to ignore
+- `days_per_step = 7`: Number of days in a single timestep
+- `conditioning_days = 30`: Number of conditioning days to use before the start of the modelling
+
+N.b. you do not specify all of the arguments after `first_day_modelled`,
+only a combination that allows the periods to use to be computed.
+Valid combinations are:
+- `first_day_modelled` + `last_day_modelled`, with `(first_day_modelled + last_day_modelled) % days_per_step == 0`
+- `first_day_modelled` + `steps_modelled`
+- `last_day_modelled` + `steps_modelled`
+- `steps_modelled` - will assume you want to model the most recent data minus `end_days_ignored`
+
+## Examples
 This allows one to do the following
 
 ```julia
@@ -126,31 +183,6 @@ setup_args = merge(Rmap.setup_args(Rmap.rmap_naive, data), default_args)
 model = Rmap.rmap_naive(setup_args...)
 ```
 
-
-## Arguments
-- [`rmap_naive`](@ref)
-- `data`: as returned by [`load_data`](@ref)
-
-## Keyword arguments
-- `days_per_step = 1`: specifies how many days to use per step (WARNING: does nothing at the moment)
-- `num_cond = 1`: specifies how many days at the start of the cases to compute approximate Xt for to condition on in the model.
-- `infection_cutoff = 30`: number of previous timesteps which can cause infection on current timestep
-- `test_delay_days = 21`: maximum number of days from infection to test
-- `presymptomdays = 2`: number of days in which the infection is discoverable
-- `first_day_modelled = nothing`: Date of first day to model
-- `last_day_modelled = nothing`: Date of last day to model
-- `steps_modelled = nothing`: Number of steps to model
-- `end_days_ignored = 0`: Number fo days at the end of the data to ignore
-- `days_per_step = 7`: Number fo days in a single timestep
-- `conditioning_days = 30`: Number of conditioning days to use before the start of the modelling
-
-N.b. you do not specify all of the arguments after first_day_modelled, only a combination that allows theperiods to use to be computed.
-Valid combinations are:
-- first_day_modelled + last_day_modelled, with (first_day_modelled + last_day_modelled) % days_per_step == 0
-- first_day_modelled + steps_modelled
-- last_day_modelled + steps_modelled
-- steps_modelled - will assume you want to model the most recent data minus end_days_ignored
-
 """
 function setup_args(
     ::typeof(rmap_naive),
@@ -170,10 +202,8 @@ function setup_args(
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
     # Convert `cases` into a matrix, removing the area-columns
-    
-
     cases = cases[:, Not(["Country", "Area name"])]
-    @unpack conditioning_days, modelled_days = process_dates_modelled(
+    conditioning_days, modelled_days = process_dates_modelled(
         Date.(names(cases), "y-m-d"),
         first_day_modelled, 
         last_day_modelled, 
@@ -201,11 +231,14 @@ function setup_args(
     mean_serial_intervals_rem = mean_serial_intervals - mean_serial_intervals_int
 
     # Precompute conditioning X approximation
-    X_cond = (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)] + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
+    X_cond = (
+        (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)]
+        + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
+    )
 
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
     test_delay_profile = let a = 5.8, b = 0.948
-        tmp = cdf(Gamma(a, b), 1:(test_delay_days - presymptomdays))
+        tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
         tmp ./= tmp[end]
         tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
         vcat(zeros(presymptomdays), tmp)
@@ -282,5 +315,65 @@ function process_dates_modelled(
     @assert first_day_index - conditioning_days >= 1
 
     return (conditioning_days=dates[(first_day_index - conditioning_days):(first_day_index - 1)], modelled_days=dates[first_day_index:last_day_index])
+end
 
+"""
+    $(SIGNATURES)
+
+Filters `data` by regions within `radius` of the `main_regions`.
+"""
+function filter_areas_by_distance(data; num_main_regions = 1, epidemic_start = 241, kwargs...)
+    @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
+
+    # Find the top-k areas in terms of number of cases when the pandemic "began".
+    area_names = areas[:, :area]
+    top_k_areas = partialsortperm(cases[:, names(cases)[epidemic_start]], 1:num_main_regions, rev=true)
+    main_areas_names = area_names[top_k_areas]
+
+    return filter_areas_by_distance(data, main_areas_names; kwargs...)
+end
+
+function filter_areas_by_distance(data, main_area::String; kwargs...)
+    filter_areas_by_distance(data, [main_area]; kwargs...)
+end
+
+function filter_areas_by_distance(
+    data, main_areas::AbstractVector{String};
+    radius = Inf
+)
+    @info "Filtering based regions which are within $radius of $(main_areas)"
+    @unpack cases, distances, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
+    main_indices = findall(∈(main_areas), areas[:, :area])
+
+    # Find the nearest neighbors
+    # Get the coords for all areas
+    coords = Array(areas[:, [:longitude, :latitude]])'
+    # Only for the top ones
+    top_k_coords = coords[:, main_indices]
+    # Compute pairwise distances
+    # If `metric` is specified, e.g. `Haversine`, use that to compute the distances rather than use pre-computed ones.
+    distances_mat = Array(data.distances[main_indices, Not("Column1")])
+    # For each `row` (i.e. each of the `top_k_ares` that we're targeting), filter based others by radius.
+    close_indices = map(eachrow(distances_mat)) do row
+        findall(<(radius), row)
+    end
+
+    # Concatenate
+    indices_to_include = vcat(close_indices...)
+    # Ensure that we don't include a region twice
+    unique!(indices_to_include)
+    # Sorting indices by value corresponds to sorting the areas according to the original ordering.
+    sort!(indices_to_include)
+    # Extract the names
+    names_to_include = areas[indices_to_include, :area]
+
+    new_data = (
+        areas = areas[indices_to_include, :],
+        cases = cases[indices_to_include, :],
+        traffic_flux_in = traffic_flux_in[indices_to_include, vcat("Column1", names_to_include)],
+        traffic_flux_out = traffic_flux_out[indices_to_include, vcat("Column1", names_to_include)],
+        area_names = names_to_include
+    )
+
+    return merge(data, new_data)
 end

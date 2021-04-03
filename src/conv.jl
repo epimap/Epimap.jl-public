@@ -9,16 +9,17 @@ Convolve `x` with filter/window `w`. Assumes `w` is "smallest" size.
 ## Notes
 - We return the left-padded convolution, NOT the symmetrically padded convolution.
   That is, we compute `x[t - i] * w[i] for  i = 1:t` only for `t = 1, ..., length(x)`
-- We use [`conv_fft`](@ref) at the moment because for our problem size evaluation
-is approximately the same but gradient computation is approx. 2X faster
-than [`conv_nnlib`](@ref). This can change in the future.
 """
 conv(x, w) = conv_nnlib(x, w)
-conv(x::AbstractMatrix, w::AbstractVector) = conv(x, reshape(w, 1, :))
 
+# Convenience method for the Matrix × Vector cases.
+for f in [:conv_fft, :conv_dsp]
+    @eval $f(x::AbstractMatrix, w::AbstractVector) = $f(x, reshape(w, 1, :))
+end
 
 """
-    conv_nnlib(x, w)
+    conv_nnlib(x::AbstractVector, w::AbstractVector)
+    conv_nnlib(x::AbstractMatrix, w::AbstractVector)
 
 Convolves `x` with filter/window `w` using `NNlib.conv`.
 
@@ -32,22 +33,23 @@ function conv_nnlib(x::AbstractVector, w::AbstractVector)
     # HACK: Honestly don't understand why in the case of 1D convolution we only
     # want padding to be either 1d or 2d, not 3d. But it complains if we don't
     # and it get's the correct result.
-    return NNlib.conv(x_arr, w_arr; pad = size(w_arr)[1:2] .- 1)
+    return NNlib.conv(x_arr, w_arr; pad = (size(w_arr, 1) - 1, 0))[:, 1, 1]
 end
 
-function conv_nnlib(x::AbstractMatrix, w::AbstractMatrix)
+# NOTE: we treat the input as 
+function conv_nnlib(x::AbstractMatrix, w::AbstractVector)
     # 2D convolution should be 4D, so we add two additional
     # dimensions (channels and batch-size) to the end of the inputs.
 
     # Materialize the transposes because otherwise Zygote.jl will complain.
-    x_arr = reshape(Array(transpose(x)), size(x, 2), size(x, 1), 1, 1)
-    w_arr = reshape(Array(transpose(w)), size(w, 2), size(w, 1), 1, 1)
+    x_arr = reshape(Array(transpose(x)), size(x, 2), 1, size(x, 1))
+    w_arr = reshape(w, length(w), 1, 1)
 
     # Result, dropping the last two dimensions that we added.
-    res = NNlib.conv(x_arr, w_arr, pad = size(w_arr) .- 1)
+    res = NNlib.conv(x_arr, w_arr, pad = (size(w_arr, 1) - 1, 0))
 
     # Recover original shape.
-    return transpose(res[:, :, 1, 1])
+    return transpose(res[:, 1, :])
 end
 
 """

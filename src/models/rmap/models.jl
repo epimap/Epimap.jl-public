@@ -1,7 +1,7 @@
 import StatsFuns: normlogpdf
 
 function truncatednormlogpdf(μ, σ, x, lb, ub)
-    logtp = StatsFuns.normlogcdf(μ, σ, ub) - StatsFuns.normlogcdf(μ, σ, lb)
+    logtp = log(StatsFuns.normcdf(μ, σ, ub) - StatsFuns.normcdf(μ, σ, lb))
     # TODO: deal with outside of boundary
     StatsFuns.normlogpdf(μ, σ, x) - logtp
     # TODO: seems like there's something messed up with the way we return `Inf`
@@ -230,7 +230,7 @@ Note that those with default value `missing` will be sampled if not specified.
         end
     end
 
-    return (R = repeat(R, inner=(1,days_per_step)), X = X[:, (num_cond + 1):end])
+    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
 @inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
@@ -250,8 +250,8 @@ end
     # Convolve `X` with `W`
     Z = Epimap.conv(X, W)
     # Slice off the conditioning days
-    Z = Z[:, (num_cond+1):end]
-    X = X[:, (num_cond+1):end]
+    Z = Z[:, (num_cond + 1):end]
+    X = X[:, (num_cond + 1):end]
 
     # Compute `Z̃` for every time-step
     # This is equivalent to
@@ -319,8 +319,6 @@ function Epimap.make_logjoint(
         lb = zero(T)
         ub = T(Inf)
 
-        lp = zero(T)
-
         # tack the conditioning X's back on to the samples
         X = hcat(X_cond, X)
         num_regions = size(C, 1)
@@ -386,8 +384,9 @@ function Epimap.make_logjoint(
         # wrt. number of days used in each time-step (specified by `days_per_step`).
         σ_α = 1 - exp(- days_per_step / T(28))
         # α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-        b_α_pre = inv(Bijectors.Logit(T(0.0), T(1.0)))
-        lp += normlogpdf(b_α_pre(α_pre)) + logabsdetjac(b_α_pre, α_pre)
+        b_α_pre = Bijectors.Logit(T(0.0), T(1.0))
+        α_pre_unconstrained, α_pre_logjac = forward(b_α_pre, α_pre)
+        lp += normlogpdf(μ₀, σ_α, α_pre_unconstrained) + α_pre_logjac
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
@@ -435,4 +434,6 @@ function Epimap.make_logjoint(
 
         return lp
     end
+
+    return logjoint
 end
