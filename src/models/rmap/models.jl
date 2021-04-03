@@ -213,8 +213,6 @@ Note that those with default value `missing` will be sampled if not specified.
                 X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
             end
         end
-
-        # @info "rmap_naive (2.$t)" DynamicPPL.getlogp(_varinfo)
     end
 
     # Observe (if we're done imputing)
@@ -406,7 +404,7 @@ function Epimap.make_logjoint(
         #     # end
         #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
-        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond) # Verified: ×
+        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
         #     # Observe
@@ -417,7 +415,7 @@ function Epimap.make_logjoint(
         #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         #     # end
         # end
-        lp += _loglikelihood(C, X, D, ϕ, num_cond) # Verified: ✓
+        lp += _loglikelihood(C, X, D, ϕ, num_cond)
 
         return lp
     end
