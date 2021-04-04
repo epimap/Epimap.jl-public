@@ -29,10 +29,10 @@ default_args = (
 setup_args = merge(Rmap.setup_args(
     Rmap.rmap_naive, 
     data, 
-    first_day_modelled = Date("2020-10-01", "y-m-d"), 
-    steps_modelled = 15, 
-    days_per_step = 7,
-    conditioning_days = 30
+    first_date = Date("2020-10-01", "y-m-d"),
+    num_steps = 15,
+    timestep = Week(1),
+    num_condition_days = 30
 ), default_args);
 
 # Instantiate model
