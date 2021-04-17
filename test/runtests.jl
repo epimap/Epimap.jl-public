@@ -4,6 +4,7 @@ using Epimap.Turing
 using StableRNGs
 using Dates
 using ComponentArrays
+using Adapt
 using Test
 
 @testset "Epimap.jl" begin

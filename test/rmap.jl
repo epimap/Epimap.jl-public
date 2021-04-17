@@ -8,7 +8,7 @@
     end
 
     function make_default_args(
-        data;
+        data, T = Float64;
         num_steps = 10,
         num_condition_days = 3,
         timestep = Day(1),
@@ -16,7 +16,7 @@
     )
         # Construct the model arguments from data
         setup_args = Rmap.setup_args(
-            Rmap.rmap_naive, data;
+            Rmap.rmap_naive, data, T;
             num_condition_days = num_condition_days,
             num_steps = num_steps,
             timestep = timestep,
@@ -31,8 +31,9 @@
             σ_local = 0.1,
             σ_ξ = 1.0
         )
+        args = merge(setup_args, default_args)
 
-        return merge(setup_args, default_args)
+        return adapt(Epimap.FloatMaybeAdaptor{T}(), args)
     end
 
     @testset "setup_args" begin
@@ -109,41 +110,47 @@
     end
 
     @testset "model" begin
-        rng = StableRNG(42);
-        num_repeats = 10
+        for T ∈ [Float32, Float64]
+            rng = StableRNG(42);
+            num_repeats = 10
 
-        # Instantiate model
-        args = make_default_args(data)
-        m = Rmap.rmap_naive(args...);
+            # Instantiate model
+            args = make_default_args(data, T)
+            m = Rmap.rmap_naive(args...);
 
-        # `make_logjoint`
-        logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(Rmap.rmap_naive, args...)
+            # `make_logjoint`
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(
+                Rmap.rmap_naive,
+                args...,
+                Matrix{T}
+            )
 
-        # Verify that they have received the same arguments
-        # Remove the type-parameters from the model
-        for k in filter(k -> !(m.args[k] isa Type), keys(m.args))
-            @test m.args[k] == getfield(logπ, k)
-        end
+            # Verify that they have received the same arguments
+            # Remove the type-parameters from the model
+            for k in filter(k -> !(m.args[k] isa Type), keys(m.args))
+                @test m.args[k] == getfield(logπ, k)
+            end
 
-        # Check average difference
-        spl = DynamicPPL.SampleFromPrior()
+            # Check average difference
+            spl = DynamicPPL.SampleFromPrior()
 
-        for i = 1:num_repeats
-            # Constrained space
-            var_info = DynamicPPL.VarInfo(rng, m);
-            θ = var_info[spl]
-            m(var_info)
+            for i = 1:num_repeats
+                # Constrained space
+                var_info = DynamicPPL.VarInfo(rng, m);
+                θ = var_info[spl]
+                m(var_info)
 
-            θ_ca = ComponentArray(var_info)
-            @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ 1
+                θ_ca = ComponentArray(var_info)
+                @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ 1
 
-            # Unconstrained space
-            DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
-            ϕ = var_info[spl]
-            m(var_info)
+                # Unconstrained space
+                DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
+                ϕ = var_info[spl]
+                m(var_info)
 
-            ϕ_ca = ComponentArray(var_info)
-            @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ 1
+                ϕ_ca = ComponentArray(var_info)
+                @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ 1
+            end
         end
     end
 
