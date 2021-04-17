@@ -1,7 +1,7 @@
 module Rmap
 
 import ..Epimap
-import ..Epimap: AR1, NegativeBinomial2, NegativeBinomial3
+import ..Epimap: AR1, NegativeBinomial2, NegativeBinomial3, 𝒩₊
 
 import Random
 import StatsFuns
@@ -15,6 +15,8 @@ using PDMats
 using UnPack
 using DocStringExtensions
 using TensorOperations
+
+using TuringUtils, ComponentArrays
 
 include("models.jl")
 include("data.jl")

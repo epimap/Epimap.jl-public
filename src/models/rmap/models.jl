@@ -16,9 +16,6 @@ end
 
 
 ### Convenience methods ###
-𝒩₊(μ, σ) = truncated(Normal(μ, σ), 1e-6, Inf)
-
-PDMats.PDMat(P::PDMat) = P
 
 function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # Use `PDMats.ScalMat` to ensure that positive-definiteness is preserved
@@ -27,7 +24,6 @@ function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # HACK: use this until we have an adjoint for `ScalMat` constructor in ChainRulesCore.jl
     K_spatial = PDMat(σ_spatial^2 .* K_spatial_nonscaled)
     K_local = PDMat(σ_local^2 .* K_local)
-
 
     K_space = PDMat(K_local + K_spatial) # `PDMat` is a no-op if the input is already a `PDMat`
     L_space = cholesky(K_space).L
@@ -113,10 +109,11 @@ Note that those with default value `missing` will be sampled if not specified.
 ```
 """
 @model function rmap_naive(
-    C, D, W, X_cond,
+    C, D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
     days_per_step = 1,
+    X_cond = nothing,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
@@ -124,7 +121,7 @@ Note that those with default value `missing` will be sampled if not specified.
 ) where {TV}
     num_regions = size(C, 1)
     num_times = size(C, 2)
-    num_cond = size(X_cond, 2)
+    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
     num_infer = num_times - num_cond
 
     @assert num_infer % days_per_step == 0
@@ -188,7 +185,11 @@ Note that those with default value `missing` will be sampled if not specified.
     # to allow Zygote.jl/reverse-mode AD compatibility.
     X = TV(undef, (num_regions, num_times))
 
-    X[:, 1:num_cond] = X_cond .+ ξ
+    if X_cond !== nothing
+        X[:, 1:num_cond] = X_cond .+ ξ
+    end
+
+    prev_lp = DynamicPPL.getlogp(_varinfo)
 
     for t = (num_cond + 1):num_times
         # compute the index of the step this day is in
@@ -205,8 +206,8 @@ Note that those with default value `missing` will be sampled if not specified.
 
         # Use continuous approximation if the element type of `X` is non-integer.
         μ = R[:, t_step] .* Z̃ₜ .+ ξ
-        if eltype(X) <: Integer
-            for i = 1:num_regions
+        if eltype(X) <: Integer 
+           for i = 1:num_regions
                 X[i, t] ~ NegativeBinomial3(μ[i], ψ)
             end
         else
@@ -222,18 +223,17 @@ Note that those with default value `missing` will be sampled if not specified.
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
         expected_positive_tests_weekly_adj = (
-            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+            weekly_case_variation[(t % 7) + 1] * expected_positive_tests
         )
-
         for i = 1:num_regions
-            C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
+            C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
         end
     end
 
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
-@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
+@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X_full, W, R, ξ, ψ, num_cond)
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
     # oneminusρₜ = @. 1 - ρₜ
@@ -247,13 +247,11 @@ end
     res2 = kron(ρₜ', F_id)
     F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
-    # Convolve `X` with `W`
-    Z = Epimap.conv(X, W)
-    # Slice off the conditioning days
-    Z = Z[:, (num_cond + 1):end]
-    X = X[:, (num_cond + 1):end]
+    # Convolve `X` with `W`.
+    # Slice off the conditioning days.
+    Z = Epimap.conv(X_full, W)[:, num_cond:end - 1]
 
-    # Compute `Z̃` for every time-step
+    # Compute `Z̃` for every time-step.
     # This is equivalent to
     #
     #   NNlib.batched_mul(F, reshape(Z, size(Z, 1), 1, size(Z, 2)))
@@ -270,6 +268,7 @@ end
 
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
+    X = X_full[:, (num_cond + 1):end]
     return sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T), T(Inf)))
 end
 
@@ -277,39 +276,98 @@ end
 @inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
     num_regions = size(C, 1)
     num_infer = size(X, 2) - num_cond
-    # Deal with potential numerical issues
-    expected_positive_tests = Epimap.conv(X, D)
     # Slice off the conditioning days
-    expected_positive_tests = expected_positive_tests[:, (num_cond+1):end]
+    # TODO: The convolution we're doing is for the PAST days, not current `t`, while
+    # `conv` implements a convolution which involves the current day.
+    # Instead maybe we should make `conv` use the "shifted" convolution, i.e. for all
+    # PREVIOUS `t`.
+    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+
     # Repeat one too many times and then extract the desired section `1:num_regions`
+    num_days = size(expected_positive_tests, 2)
     weekly_case_variation = transpose(
         repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
     )
-    expected_positive_tests = expected_positive_tests .* weekly_case_variation
+    expected_positive_tests_weekly_adj = expected_positive_tests .* weekly_case_variation
 
-    C = C[:, (num_cond+1):end]
     # We extract only the time-steps after the imputation-step
-    T = eltype(expected_positive_tests)
+    T = eltype(expected_positive_tests_weekly_adj)
     return sum(Epimap.nbinomlogpdf3.(
-        expected_positive_tests,
+        expected_positive_tests_weekly_adj,
         ϕ,
-        T.(C) # conversion ensures precision is preserved
+        T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
     ))
+end
+
+macro map!(f, args...)
+    @gensym g
+
+    exprs = []
+    for a in args
+        push!(exprs, :($a = $g($a)))
+    end
+
+    return esc(:($g = $f; $(exprs...)))
 end
 
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
-    C, D, W, X_cond,
+    C, D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
     days_per_step = 1,
+    X_cond = nothing,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
+    num_regions = size(C, 1)
+    num_times = size(C, 2)
+    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
+    num_infer = num_times - num_cond
+
+    # Construct the corresponding bijector
+    m = rmap_naive(
+        C, D, W,
+        F_id, F_out, F_in,
+        K_time, K_spatial, K_local,
+        days_per_step,
+        X_cond,
+        ρ_spatial, ρ_time,
+        σ_spatial, σ_local,
+        σ_ξ,
+        TV
+    )
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
+    vi = Turing.VarInfo(m)
+    θ = adapt(adaptor, ComponentArray(vi))
+    b = adapt(adaptor, TuringUtils.optimize_bijector(
+        Bijectors.bijector(vi; tuplify = true, squeeze = false)
+    ))
+    binv = inv(b)
+
+    weekly_case_variation_reindex = map(1:7) do i
+        (i + num_cond) % 7 + 1
+    end
+
+    function logjoint_unconstrained(args_unconstrained)
+        args, logjac = forward(binv, args_unconstrained)
+        return logjoint(args) + logjac
+    end
+
     function logjoint(args)
         @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+
+        # Ensure that the univariates are treated as 0-dims
+        @map! first ψ μ_ar σ_ar α_pre ξ
+
+        X = if X isa AbstractVector
+            # Need to reshape
+            reshape(X, num_regions, :)
+        else
+            X
+        end
 
         T = eltype(ψ) # TODO: Should probably find a better way to deal with this
 
@@ -320,11 +378,7 @@ function Epimap.make_logjoint(
         ub = T(Inf)
 
         # tack the conditioning X's back on to the samples
-        X = hcat(X_cond, X)
-        num_regions = size(C, 1)
-        num_times = size(C, 2)
-        num_cond = size(X_cond, 2)
-        num_infer = num_times - num_cond
+        X = X_cond === nothing ? X : hcat(X_cond .+ ξ , X)
 
         @assert num_infer % days_per_step == 0
         num_steps = num_infer ÷ days_per_step
@@ -430,10 +484,14 @@ function Epimap.make_logjoint(
         #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         #     # end
         # end
-        lp += _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
+        lp += _loglikelihood(
+            C, X, D, ϕ,
+            weekly_case_variation[weekly_case_variation_reindex],
+            num_cond
+        )
 
         return lp
     end
 
-    return logjoint
+    return (logjoint, logjoint_unconstrained, b, θ)
 end

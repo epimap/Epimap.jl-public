@@ -1,3 +1,6 @@
+𝒩₊(μ, σ) = truncated(Normal(μ, σ), 0, Inf)
+
+
 """
     NegativeBinomial2(μ, ϕ)
 
@@ -112,6 +115,15 @@ Base.length(ar::AR1) = ar.num_times
 Base.eltype(::AR1{T1, T2, T3}) where {T1, T2, T3} = promote_type(
     eltype(T1), eltype(T2), eltype(T3)
 )
+
+Bijectors.bijector(::AR1) = Bijectors.Identity{1}()
+
+function Bijectors.bijector(td::Bijectors.TransformedDistribution)
+    # Map back to original space and then from space of `dist`
+    # to real space.
+    b = bijector(td.dist)
+    return inv(td.transform) ∘ b
+end
 
 function Distributions.rand(rng::Random.AbstractRNG, ar::AR1)    
     # Sample

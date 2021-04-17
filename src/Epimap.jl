@@ -2,7 +2,7 @@ module Epimap
 
 import Random
 import StatsFuns, SpecialFunctions
-import NNlib
+import NNlib, PDMats
 
 using Reexport
 @reexport using Turing, Distributions

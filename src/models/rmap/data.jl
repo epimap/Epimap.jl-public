@@ -194,7 +194,8 @@ function setup_args(
     num_steps = nothing, 
     num_end_days_ignore = 0, 
     timestep = Week(1),
-    num_condition_days = 30
+    num_condition_days = 30,
+    condition_observations = false
 ) where {T}
     days_per_step = Dates.days(timestep)
     
@@ -211,10 +212,10 @@ function setup_args(
         timestep = timestep,
         num_condition_days = num_condition_days
     )
+    @info "Using the following dates of data" dates_condition dates_model
     dates_condition_str = Dates.format.(dates_condition, "yyyy-mm-dd")
     dates_model_str = Dates.format.(dates_model, "yyyy-mm-dd")
-    cases = cases[:, vcat(dates_condition_str, dates_model_str)]
-    cases = Array(cases)
+    cases = Array(cases[:, vcat(dates_condition_str, dates_model_str)])
 
     (num_regions, num_days) =  size(cases)
     num_cond = size(dates_condition, 1)
@@ -226,15 +227,23 @@ function setup_args(
     # re-normalize wrt. ℓ1-norm to ensure still sums to 1
     normalize!(serial_intervals, 1)
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
+
+    # Compute `X_cond`
     mean_serial_intervals = sum((1:size(serial_intervals,1)) .* serial_intervals)
     mean_serial_intervals_int = Int(floor(mean_serial_intervals))
     mean_serial_intervals_rem = mean_serial_intervals - mean_serial_intervals_int
 
     # Precompute conditioning X approximation
-    X_cond = (
-        (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)]
-        + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
-    )
+    X_cond = if condition_observations
+        cases[:, 1:num_cond]
+    elseif num_condition_days > 0
+        (
+            (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)]
+            + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
+        )
+    else
+        nothing
+    end
 
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
     test_delay_profile = let a = 5.8, b = 0.948
@@ -267,7 +276,6 @@ function setup_args(
         C = cases,
         D = test_delay_profile,
         W = serial_intervals,
-        X_cond = X_cond,
         F_id = F_id,
         F_out = F_out,
         F_in = F_in,
@@ -275,9 +283,9 @@ function setup_args(
         K_spatial = K_spatial,
         K_local = K_local,
         days_per_step = days_per_step,
+        X_cond = X_cond
     )
 
-    # 
     return adapt(Epimap.FloatMaybeAdaptor{T}(), result)
 end
 
@@ -364,7 +372,9 @@ function split_dates(
 
     @assert last_date ≤ dates[end] "`last_date` is out-of-bounds"
     @assert first_date ≥ dates[1] "`first_date` is out-of-bounds"
-    @assert first_date > condition_start_date "`first_date` is within the conditioning-period"
+    # If `num_condition_days` is 0, then `condition_start_date` will be the same as `first_date`
+    # but the resulting range will be empty, i.e. no need to throw an error.
+    @assert num_condition_days == 0 || first_date > condition_start_date "`first_date` is within the conditioning-period"
 
     return (
         condition=condition_start_date:Day(1):first_date - Day(1),
@@ -426,6 +436,7 @@ function filter_areas_by_distance(
     new_data = (
         areas = areas[indices_to_include, :],
         cases = cases[indices_to_include, :],
+        distances = distances[indices_to_include, vcat("Column1", names_to_include)],
         traffic_flux_in = traffic_flux_in[indices_to_include, vcat("Column1", names_to_include)],
         traffic_flux_out = traffic_flux_out[indices_to_include, vcat("Column1", names_to_include)],
         area_names = names_to_include
