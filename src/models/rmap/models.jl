@@ -343,7 +343,7 @@ function Epimap.make_logjoint(
     vi = Turing.VarInfo(m)
     θ = adapt(adaptor, ComponentArray(vi))
     b = adapt(adaptor, TuringUtils.optimize_bijector(
-        Bijectors.bijector(vi; tuplify = true, squeeze = false)
+        Bijectors.bijector(vi; tuplify = true)
     ))
     binv = inv(b)
 
