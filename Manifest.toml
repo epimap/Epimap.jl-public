@@ -104,8 +104,10 @@ uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 version = "0.7.0"
 
 [[Bijectors]]
-deps = ["ArgCheck", "ChainRulesCore", "Compat", "ConstructionBase", "Distributions", "Functors", "LinearAlgebra", "MacroTools", "MappedArrays", "NNlib", "NonlinearSolve", "Random", "Reexport", "Requires", "SparseArrays", "StaticArrays", "Statistics", "StatsFuns"]
-path = "../../public/Bijectors.jl"
+deps = ["ArgCheck", "ChainRulesCore", "Compat", "Distributions", "Functors", "LinearAlgebra", "MappedArrays", "NNlib", "NonlinearSolve", "Random", "Reexport", "Requires", "SparseArrays", "Statistics", "StatsFuns"]
+git-tree-sha1 = "050e4abb7c2a91fff244a6a2b2105b12eea6097a"
+repo-rev = "tor/stacked-relax-type-constraints"
+repo-url = "https://github.com/TuringLang/Bijectors.jl"
 uuid = "76274a88-744f-5084-9051-94815aaf08c4"
 version = "0.9.1"
 
@@ -1050,7 +1052,9 @@ version = "0.15.17"
 
 [[TuringUtils]]
 deps = ["Bijectors", "ComponentArrays", "DynamicPPL", "Turing"]
-path = "/home/tor/Projects/public/TuringUtils.jl/"
+git-tree-sha1 = "0fa9a15b96b277a91b1c0d0d797366e8aaae8eeb"
+repo-rev = "main"
+repo-url = "https://github.com/torfjelde/TuringUtils.jl"
 uuid = "5eca0922-168d-4ac7-867c-11261f9b792b"
 version = "0.1.0"
 
