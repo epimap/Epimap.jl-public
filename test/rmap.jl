@@ -111,7 +111,9 @@
 
     @testset "model" begin
         for T ∈ [Float32, Float64]
-            rng = StableRNG(42);
+            adaptor = Epimap.FloatMaybeAdaptor{T}()
+            # Use different threshold if `Float32` since we're comparing to use of `Float64`.
+            threshold = (T === Float32) ? 5 : 1
             num_repeats = 10
 
             # Instantiate model
@@ -136,20 +138,24 @@
 
             for i = 1:num_repeats
                 # Constrained space
-                var_info = DynamicPPL.VarInfo(rng, m);
+                var_info = DynamicPPL.VarInfo(m);
                 θ = var_info[spl]
                 m(var_info)
 
-                θ_ca = ComponentArray(var_info)
-                @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ 1
+                θ_ca = adapt(adaptor, ComponentArray(var_info))
+                @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ threshold
 
                 # Unconstrained space
                 DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
                 ϕ = var_info[spl]
                 m(var_info)
 
-                ϕ_ca = ComponentArray(var_info)
-                @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ 1
+                ϕ_ca = adapt(adaptor, ComponentArray(var_info))
+                @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ threshold
+
+                # Ensure that precision is preserved
+                @test logπ(θ_ca) isa T
+                @test logπ_unconstrained(ϕ_ca) isa T
             end
         end
     end

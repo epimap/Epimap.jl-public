@@ -1,4 +1,5 @@
 import StatsFuns: normlogpdf
+using Bijectors.Functors
 
 function truncatednormlogpdf(μ, σ, x, lb, ub)
     logtp = log(StatsFuns.normcdf(μ, σ, ub) - StatsFuns.normcdf(μ, σ, lb))
@@ -342,9 +343,13 @@ function Epimap.make_logjoint(
     adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
     vi = Turing.VarInfo(m)
     θ = adapt(adaptor, ComponentArray(vi))
-    b = adapt(adaptor, TuringUtils.optimize_bijector(
+    b_orig = TuringUtils.optimize_bijector(
         Bijectors.bijector(vi; tuplify = true)
-    ))
+    )
+    b = fmap(b_orig) do x
+        adapt(adaptor, x)
+    end
+
     binv = inv(b)
 
     weekly_case_variation_reindex = map(1:7) do i
