@@ -3,6 +3,7 @@ module Epimap
 import Random
 import StatsFuns, SpecialFunctions
 import NNlib, PDMats
+import ComponentArrays
 
 using Reexport
 @reexport using Turing, Distributions

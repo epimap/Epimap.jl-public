@@ -244,8 +244,8 @@ end
     # end
 
     # Equivalent to the above `@tensor`
-    res1 = kron(1 .- ρₜ', F_cross)
-    res2 = kron(ρₜ', F_id)
+    res1 = Epimap.kron2d(1 .- ρₜ', F_cross)
+    res2 = Epimap.kron2d(ρₜ', F_id)
     F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
     # Convolve `X` with `W`.
@@ -300,17 +300,6 @@ end
     ))
 end
 
-macro map!(f, args...)
-    @gensym g
-
-    exprs = []
-    for a in args
-        push!(exprs, :($a = $g($a)))
-    end
-
-    return esc(:($g = $f; $(exprs...)))
-end
-
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
     C, D, W,
@@ -328,7 +317,7 @@ function Epimap.make_logjoint(
     num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
     num_infer = num_times - num_cond
 
-    # Construct the corresponding bijector
+    # Execute the model once to get initial parameters.
     m = rmap_naive(
         C, D, W,
         F_id, F_out, F_in,
@@ -340,32 +329,43 @@ function Epimap.make_logjoint(
         σ_ξ,
         TV
     )
-    adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
+
     vi = Turing.VarInfo(m)
+    # Adapt parameters to use desired `eltype`.
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
     θ = adapt(adaptor, ComponentArray(vi))
+    # Construct the corresponding bijector.
     b_orig = TuringUtils.optimize_bijector(
         Bijectors.bijector(vi; tuplify = true)
     )
+    # Adapt bijector parameters to use desired `eltype`.
     b = fmap(b_orig) do x
         adapt(adaptor, x)
     end
-
     binv = inv(b)
 
+    # Ensures that we'll be using the same ordering as the original model.
     weekly_case_variation_reindex = map(1:7) do i
         (i + num_cond) % 7 + 1
     end
 
-    function logjoint_unconstrained(args_unconstrained)
+    # Converter used for standard arrays.
+    axis = first(ComponentArrays.getaxes(θ))
+    nt(x) = Epimap.tonamedtuple(x, axis)
+
+
+    logjoint_unconstrained(args_unconstrained::AbstractVector) = logjoint(nt(args_unconstrained))
+    function logjoint_unconstrained(args_unconstrained::Union{NamedTuple, ComponentArray})
         args, logjac = forward(binv, args_unconstrained)
         return logjoint(args) + logjac
     end
 
-    function logjoint(args)
+    logjoint(args::AbstractVector) = logjoint(nt(args))
+    function logjoint(args::Union{NamedTuple, ComponentArray})
         @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
 
         # Ensure that the univariates are treated as 0-dims
-        @map! first ψ μ_ar σ_ar α_pre ξ
+        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ
 
         X = if X isa AbstractVector
             # Need to reshape
@@ -449,7 +449,7 @@ function Epimap.make_logjoint(
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
-        b_ρₜ = Bijectors.Logit{1, T}(T(0.0), T(1.0))
+        b_ρₜ = Bijectors.Logit{T}(T(0.0), T(1.0))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
         # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
@@ -478,6 +478,8 @@ function Epimap.make_logjoint(
         #     # end
         #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
+        # NOTE: This is the part which is the slowest.
+        # Adds almost a second to the gradient computation for certain "standard" setups.
         lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
