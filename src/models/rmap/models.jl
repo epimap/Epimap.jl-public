@@ -449,7 +449,7 @@ function Epimap.make_logjoint(
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
-        b_ρₜ = Bijectors.Logit{T}(T(0.0), T(1.0))
+        b_ρₜ = Bijectors.Logit{1, T}(T(0.0), T(1.0))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
         # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
