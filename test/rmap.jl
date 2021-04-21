@@ -159,7 +159,7 @@
                 @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ threshold
                 # Raw array impl
                 ϕ_ca_raw = ComponentArrays.getdata(ϕ_ca)
-                @test logπ(ϕ_ca) == logπ(ϕ_ca)
+                @test logπ_unconstrained(ϕ_ca) == logπ_unconstrained(ϕ_ca)
 
                 # Ensure that precision is preserved
                 @test logπ(θ_ca) isa T
