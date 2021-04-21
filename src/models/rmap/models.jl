@@ -341,7 +341,9 @@ function Epimap.make_logjoint(
     nt(x) = Epimap.tonamedtuple(x, axis)
 
 
-    logjoint_unconstrained(args_unconstrained::AbstractVector) = logjoint(nt(args_unconstrained))
+    function logjoint_unconstrained(args_unconstrained::AbstractVector)
+        return logjoint_unconstrained(nt(args_unconstrained))
+    end
     function logjoint_unconstrained(args_unconstrained::Union{NamedTuple, ComponentArray})
         args, logjac = forward(binv, args_unconstrained)
         return logjoint(args) + logjac
@@ -430,13 +432,13 @@ function Epimap.make_logjoint(
         # wrt. number of days used in each time-step (specified by `days_per_step`).
         σ_α = 1 - exp(- days_per_step / T(28))
         # α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-        b_α_pre = Bijectors.Logit(T(0.0), T(1.0))
+        b_α_pre = Bijectors.Logit(zero(T), one(T))
         α_pre_unconstrained, α_pre_logjac = forward(b_α_pre, α_pre)
         lp += normlogpdf(μ₀, σ_α, α_pre_unconstrained) + α_pre_logjac
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
-        b_ρₜ = Bijectors.Logit{1, T}(T(0.0), T(1.0))
+        b_ρₜ = Bijectors.Logit{1}(zero(T), one(T))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
         # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
