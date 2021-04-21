@@ -142,20 +142,30 @@
                 θ = var_info[spl]
                 m(var_info)
 
+                # `ComponentArray` impl
                 θ_ca = adapt(adaptor, ComponentArray(var_info))
                 @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ threshold
+                # Raw array impl
+                θ_ca_raw = ComponentArrays.getdata(θ_ca)
+                @test logπ(θ_ca) == logπ(θ_ca)
 
                 # Unconstrained space
                 DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
                 ϕ = var_info[spl]
                 m(var_info)
 
+                # `ComponentArray` impl
                 ϕ_ca = adapt(adaptor, ComponentArray(var_info))
                 @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ threshold
+                # Raw array impl
+                ϕ_ca_raw = ComponentArrays.getdata(ϕ_ca)
+                @test logπ(ϕ_ca) == logπ(ϕ_ca)
 
                 # Ensure that precision is preserved
                 @test logπ(θ_ca) isa T
+                @test logπ(θ_ca_raw) isa T
                 @test logπ_unconstrained(ϕ_ca) isa T
+                @test logπ_unconstrained(ϕ_ca_raw) isa T
             end
         end
     end
