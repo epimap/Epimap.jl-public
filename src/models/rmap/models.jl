@@ -263,7 +263,9 @@ end
     Z̃ = NNlib.batched_vec(F, Z)
 
     # Compute the mean for the different regions at every time-step
-    μ = R .* Z̃ .+ ξ
+    # HACK: seems like it can sometimes be negative due to numerical issues,
+    # so we just `abs` to be certain. This is a bit hacky though.
+    μ = abs.(R .* Z̃ .+ ξ)
 
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
