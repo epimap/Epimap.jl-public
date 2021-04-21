@@ -1,19 +1,6 @@
 import StatsFuns: normlogpdf
 using Bijectors.Functors
 
-"""
-    lowerboundednormlogpdf(μ, σ, x, lb)
-
-Computes the logpdf of a lower-bounded normal.
-
-Useful since taking the gradient through `StatsFuns.normcdf(μ, σ, Inf)`
-results in `Inf` in gradients.
-"""
-function lowerboundednormlogpdf(μ, σ, x, lb)
-    logtp = log(1 - StatsFuns.normcdf(μ, σ, lb))
-    return StatsFuns.normlogpdf(μ, σ, x) - logtp
-end
-
 ### Convenience methods ###
 
 function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
@@ -270,7 +257,7 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, T(1e-6)))
+    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
 end
 
 
@@ -293,7 +280,7 @@ end
 
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests_weekly_adj)
-    return sum(Epimap.nbinomlogpdf3.(
+    return sum(nbinomlogpdf3.(
         expected_positive_tests_weekly_adj,
         ϕ,
         T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
@@ -379,7 +366,7 @@ function Epimap.make_logjoint(
         μ₀ = zero(T)
         σ₀ = T(5)
 
-        lb = T(1e-6) # zero(T)
+        lb = zero(T)
         ub = T(Inf)
 
         # tack the conditioning X's back on to the samples
@@ -437,7 +424,7 @@ function Epimap.make_logjoint(
         # μ_ar ~ Normal(-2.19, 0.25)
         lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += normlogpdf(T(0.0), T(0.25), σ_ar)
+        lp += lowerboundednormlogpdf(T(0.0), T(0.25), σ_ar, lb)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).

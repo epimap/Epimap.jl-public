@@ -1,7 +1,14 @@
 module Rmap
 
 import ..Epimap
-import ..Epimap: AR1, NegativeBinomial2, NegativeBinomial3, 𝒩₊
+import ..Epimap:
+    AR1,
+    NegativeBinomial2,
+    NegativeBinomial3,
+    𝒩₊,
+    lowerboundednormlogpdf,
+    truncatednormlogpdf,
+    nbinomlogpdf3
 
 import Random
 import StatsFuns

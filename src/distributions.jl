@@ -1,4 +1,33 @@
+import StatsFuns: normlogpdf
 𝒩₊(μ, σ) = truncated(Normal(μ, σ), 0, Inf)
+
+"""
+    lowerboundednormlogpdf(μ, σ, x, lb)
+
+Computes the logpdf of a lower-bounded normal.
+
+## Notes
+Taking the derivatives of `StatsFuns.normcdf(μ, σ, Inf)`
+results in `Inf` in gradients, and therefore `truncatednormlogpdf` requires
+if-statements to check if the bounds are finite.
+`lowerobundednormlogpdf` is therefore useful to avoid these if-statements.
+"""
+function lowerboundednormlogpdf(μ, σ, x, lb)
+    logtp = log(1 - StatsFuns.normcdf(μ, σ, lb))
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+end
+
+"""
+    truncatednormlogpdf(μ, σ, x, lb, ub)
+
+Computes the logpdf of a truncated normal.
+"""
+function truncatednormlogpdf(μ, σ, x, lb, ub)
+    lcdf = isinf(lb) ? zero(lb) : StatsFuns.normcdf(μ, σ, lb)
+    ucdf = isinf(ub) ? one(ub) : StatsFuns.normcdf(μ, σ, ub)
+    logtp = log(ucdf - lcdf)
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+end
 
 
 """
