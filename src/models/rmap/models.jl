@@ -268,7 +268,7 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, eps(T)))
+    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, T(1e-6)))
 end
 
 
@@ -377,7 +377,7 @@ function Epimap.make_logjoint(
         μ₀ = zero(T)
         σ₀ = T(5)
 
-        lb = eps(T) # zero(T)
+        lb = T(1e-6) # zero(T)
         ub = T(Inf)
 
         # tack the conditioning X's back on to the samples
