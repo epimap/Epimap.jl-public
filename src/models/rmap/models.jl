@@ -1,20 +1,18 @@
 import StatsFuns: normlogpdf
 using Bijectors.Functors
 
-function truncatednormlogpdf(μ, σ, x, lb, ub)
-    logtp = log(StatsFuns.normcdf(μ, σ, ub) - StatsFuns.normcdf(μ, σ, lb))
-    # TODO: deal with outside of boundary
-    StatsFuns.normlogpdf(μ, σ, x) - logtp
-    # TODO: seems like there's something messed up with the way we return `Inf`
-    # if lb <= x <= ub
-    #     StatsFuns.normlogpdf(μ, σ, x) - logtp
-    # else
-    #     TF = float(eltype(x))
-    #     -TF(Inf)
-    # end
+"""
+    lowerboundednormlogpdf(μ, σ, x, lb)
+
+Computes the logpdf of a lower-bounded normal.
+
+Useful since taking the gradient through `StatsFuns.normcdf(μ, σ, Inf)`
+results in `Inf` in gradients.
+"""
+function lowerboundednormlogpdf(μ, σ, x, lb)
+    logtp = log(1 - StatsFuns.normcdf(μ, σ, lb))
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
 end
-
-
 
 ### Convenience methods ###
 
@@ -270,7 +268,7 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T), T(Inf)))
+    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
 end
 
 
@@ -393,9 +391,9 @@ function Epimap.make_logjoint(
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = truncatednormlogpdf(μ₀, σ₀, ψ, lb, ub)
+        lp = lowerboundednormlogpdf(μ₀, σ₀, ψ, lb)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ϕ, lb, ub))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ϕ, lb))
 
         # Weekly case variation
         lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
@@ -403,15 +401,15 @@ function Epimap.make_logjoint(
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ρ_spatial, lb, ub))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_spatial, lb))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(μ₀, σ₀, ρ_time, lb, ub))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_time, lb))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(μ₀, σ₀, σ_spatial, lb, ub))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_spatial, lb))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(μ₀, σ₀, σ_local, lb, ub))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_local, lb))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -457,9 +455,9 @@ function Epimap.make_logjoint(
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += truncatednormlogpdf.(μ₀, σ₀, σ_ξ, lb, ub)
+        lp += lowerboundednormlogpdf.(μ₀, σ₀, σ_ξ, lb)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += truncatednormlogpdf.(μ₀, σ_ξ, ξ, lb, ub)
+        lp += lowerboundednormlogpdf.(μ₀, σ_ξ, ξ, lb)
 
         # for t = 2:num_times
         #     # Flux matrix
@@ -476,7 +474,7 @@ function Epimap.make_logjoint(
         #     # for i = 1:num_regions
         #     #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
         #     # end
-        #     lp += sum(truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
+        #     lp += sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
