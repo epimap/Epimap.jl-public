@@ -42,3 +42,22 @@ end
 
     # TODO: test `logpdf` somehow
 end
+
+@testset "truncatednormlogpdf" begin
+    rng = StableRNG(42);
+
+    μs = [0.0, 1.0]
+    σs = [0.5, 10.0]
+    lbs = [-Inf, -5.0, 0.0, 5.0]
+    ubs = [-5.0, 0.0, 5.0, Inf]
+
+    for μ in μs, σ in σs, lb in lbs, ub in ubs
+        if lb ≥ ub
+            continue
+        end
+        target = truncated(Normal(μ, σ), lb, ub)
+        x = rand(target)
+
+        @test logpdf(target, x) ≈ Rmap.truncatednormlogpdf(μ, σ, x, lb, ub)
+    end
+end

@@ -1,3 +1,35 @@
+import StatsFuns: normlogpdf
+𝒩₊(μ, σ) = truncated(Normal(μ, σ), 0, Inf)
+
+"""
+    lowerboundednormlogpdf(μ, σ, x, lb)
+
+Computes the logpdf of a lower-bounded normal.
+
+## Notes
+Taking the derivatives of `StatsFuns.normcdf(μ, σ, Inf)`
+results in `Inf` in gradients, and therefore `truncatednormlogpdf` requires
+if-statements to check if the bounds are finite.
+`lowerobundednormlogpdf` is therefore useful to avoid these if-statements.
+"""
+function lowerboundednormlogpdf(μ, σ, x, lb)
+    logtp = log(1 - StatsFuns.normcdf(μ, σ, lb))
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+end
+
+"""
+    truncatednormlogpdf(μ, σ, x, lb, ub)
+
+Computes the logpdf of a truncated normal.
+"""
+function truncatednormlogpdf(μ, σ, x, lb, ub)
+    lcdf = isinf(lb) ? zero(lb) : StatsFuns.normcdf(μ, σ, lb)
+    ucdf = isinf(ub) ? one(ub) : StatsFuns.normcdf(μ, σ, ub)
+    logtp = log(ucdf - lcdf)
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+end
+
+
 """
     NegativeBinomial2(μ, ϕ)
 
@@ -33,6 +65,39 @@ end
 
 NegativeBinomial3(μ, ϕ) = NegativeBinomial2(μ, μ / ϕ)
 
+@inline nbinomlogpdf3(μ, ϕ, k) = nbinomlogpdf2(μ, μ / ϕ, k)
+@inline function nbinomlogpdf2(μ, ϕ, k)
+    p = 1 / (1 + μ / ϕ)
+    r = ϕ
+
+    return nbinomlogpdf(p, r, k)
+end
+
+"""
+    nbinomlogpdf(p, r, k)
+
+Julia implementation of `StatsFuns.nbinomlogpdf`.
+
+## Notes
+- Note: `SpecialFunctions.logbeta(a::Real, b::Int)` will result in a call to
+  `SpecialFunctions.loggamma(b::Int)` which returns `Float64`. Therefore,
+  to preserve floating point precision, `k` needs to be converted into float.
+
+## Examples
+```jldoctest
+julia> using Epimap
+
+julia> p = 0.5; r = 10; k = 5;
+
+julia> Epimap.nbinomlogpdf(p, r, k) ≈ logpdf(NegativeBinomial(r, p), k)
+true
+```
+
+"""
+@inline function nbinomlogpdf(p, r, k)
+    r_ = r * log(p) + k * log1p(-p)
+    return r_ - log(k + r) - SpecialFunctions.logbeta(r, k + 1)
+end
 
 """
     GammaMeanCv(mean, cv)
@@ -79,6 +144,15 @@ Base.length(ar::AR1) = ar.num_times
 Base.eltype(::AR1{T1, T2, T3}) where {T1, T2, T3} = promote_type(
     eltype(T1), eltype(T2), eltype(T3)
 )
+
+Bijectors.bijector(::AR1) = Bijectors.Identity{1}()
+
+function Bijectors.bijector(td::Bijectors.TransformedDistribution)
+    # Map back to original space and then from space of `dist`
+    # to real space.
+    b = bijector(td.dist)
+    return inv(td.transform) ∘ b
+end
 
 function Distributions.rand(rng::Random.AbstractRNG, ar::AR1)    
     # Sample

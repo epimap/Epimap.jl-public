@@ -1,27 +1,15 @@
 import StatsFuns: normlogpdf
-
-function truncatednormlogpdf(μ, σ, x, lb, ub)
-    logtp = StatsFuns.normlogcdf(μ, σ, ub) - StatsFuns.normlogcdf(μ, σ, lb)
-    # TODO: deal with outside of boundary
-    StatsFuns.normlogpdf(μ, σ, x) - logtp
-    # TODO: seems like there's something messed up with the way we return `Inf`
-    # if lb <= x <= ub
-    #     StatsFuns.normlogpdf(μ, σ, x) - logtp
-    # else
-    #     TF = float(eltype(x))
-    #     -TF(Inf)
-    # end
-end
-
-
+using Bijectors.Functors
 
 ### Convenience methods ###
-𝒩₊(μ, σ) = truncated(Normal(μ, σ), 1e-6, Inf)
 
 function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # Use `PDMats.ScalMat` to ensure that positive-definiteness is preserved
-    K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
-    K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
+    # K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
+    # K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
+    # HACK: use this until we have an adjoint for `ScalMat` constructor in ChainRulesCore.jl
+    K_spatial = PDMat(σ_spatial^2 .* K_spatial_nonscaled)
+    K_local = PDMat(σ_local^2 .* K_local)
 
     K_space = PDMat(K_local + K_spatial) # `PDMat` is a no-op if the input is already a `PDMat`
     L_space = cholesky(K_space).L
@@ -47,6 +35,7 @@ Naive implementation of full Rmap model.
     the probability that an infected person tests positive after `t` steps.
 - `W::AbstractVector`: generation distribution/infection profile of length `< num_times`, i.e.
     `W[t]` is the probability of a secondary infection after `t` steps.
+- `X_cond::AbstractMatrix`: Precomputed Xt before the start of the modelling period to condition on.
 - `F_id::AbstractMatrix`: diagonal flux matrix representing local infection.
 - `F_out::AbstractMatrix`: flux matrix representing outgoing infections.
 - `F_in::AbstractMatrix`: flux matrix representing incoming infections.
@@ -109,15 +98,20 @@ Note that those with default value `missing` will be sampled if not specified.
     C, D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
+    days_per_step = 1,
+    X_cond = nothing,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
-    num_impute = 10,
-    days_per_step = 1,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
     num_regions = size(C, 1)
     num_times = size(C, 2)
+    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
+    num_infer = num_times - num_cond
+
+    @assert num_infer % days_per_step == 0
+    num_steps = num_infer ÷ days_per_step
 
     prev_infect_cutoff = length(W)
     test_delay_cutoff = length(D)
@@ -125,6 +119,9 @@ Note that those with default value `missing` will be sampled if not specified.
     # Noise for cases
     ψ ~ 𝒩₊(0, 5)
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
+
+    # Weekly variation
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
 
     ### GP prior ###
     # Length scales
@@ -136,8 +133,8 @@ Note that those with default value `missing` will be sampled if not specified.
     σ_local ~ 𝒩₊(0, 5)
 
     # GP prior
-    E_vec ~ MvNormal(num_regions * num_times, 1.0)
-    E = reshape(E_vec, (num_regions, num_times))
+    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
+    E = reshape(E_vec, (num_regions, num_steps))
 
     # Get cholesky decomps using precomputed kernel matrices
     L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
@@ -164,7 +161,7 @@ Note that those with default value `missing` will be sampled if not specified.
 
     # Use bijector to transform to have support (0, 1) rather than ℝ.
     b = Bijectors.Logit{1, Float64}(0.0, 1.0)
-    ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b))
+    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
 
     # Global infection
     σ_ξ ~ 𝒩₊(0, 5)
@@ -174,21 +171,29 @@ Note that those with default value `missing` will be sampled if not specified.
     # to allow Zygote.jl/reverse-mode AD compatibility.
     X = TV(undef, (num_regions, num_times))
 
-    X[:, 1] .= 0
+    if X_cond !== nothing
+        X[:, 1:num_cond] = X_cond
+    end
 
-    for t = 2:num_times
+    prev_lp = DynamicPPL.getlogp(_varinfo)
+
+    for t = (num_cond + 1):num_times
+        # compute the index of the step this day is in
+        t_step = (t - num_cond - 1) ÷ days_per_step + 1
+
         # Flux matrix
-        Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
-        # Eq. (4) but we also add in the observed cases `C` at each time
+        # Eq. (4)
+        # offset t's to account for the extra conditioning days of Xt
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
         Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
-        μ = R[:, t] .* Z̃ₜ .+ ξ
-        if eltype(X) <: Integer
-            for i = 1:num_regions
+        μ = R[:, t_step] .* Z̃ₜ .+ ξ
+        if eltype(X) <: Integer 
+           for i = 1:num_regions
                 X[i, t] ~ NegativeBinomial3(μ[i], ψ)
             end
         else
@@ -200,65 +205,209 @@ Note that those with default value `missing` will be sampled if not specified.
     end
 
     # Observe (if we're done imputing)
-    for t = num_impute:num_times
+    for t = (num_cond + 1):num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-
-
+        expected_positive_tests_weekly_adj = (
+            weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+        )
         for i = 1:num_regions
-            C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
+            C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
         end
     end
 
-    return (R = R, X = X)
+    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
+@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X_full, W, R, ξ, ψ, num_cond)
+    # Compute the full flux
+    F_cross = @. β * F_out + (1 - β) * F_in
+    # oneminusρₜ = @. 1 - ρₜ
+    # kron(1 .- ρₜ', F_cross)
+    # F = @tensor begin
+    #     F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * F_cross[i, j]
+    # end
+
+    # Equivalent to the above `@tensor`
+    res1 = Epimap.kron2d(1 .- ρₜ', F_cross)
+    res2 = Epimap.kron2d(ρₜ', F_id)
+    F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
+
+    # Convolve `X` with `W`.
+    # Slice off the conditioning days.
+    Z = Epimap.conv(X_full, W)[:, num_cond:end - 1]
+
+    # Compute `Z̃` for every time-step.
+    # This is equivalent to
+    #
+    #   NNlib.batched_mul(F, reshape(Z, size(Z, 1), 1, size(Z, 2)))
+    #
+    # where we get
+    #
+    #   Z̃[:, k] := F[:, :, k] * Z[:, k]
+    #
+    # which is exactly what we want.
+    Z̃ = NNlib.batched_vec(F, Z)
+
+    # Compute the mean for the different regions at every time-step
+    # HACK: seems like it can sometimes be negative due to numerical issues,
+    # so we just `abs` to be certain. This is a bit hacky though.
+    μ = abs.(R .* Z̃ .+ ξ)
+
+    # At this point `μ` will be of size `(num_regions, num_timesteps)`
+    T = eltype(μ)
+    X = X_full[:, (num_cond + 1):end]
+    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
+end
+
+
+@inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
+    num_regions = size(C, 1)
+    num_infer = size(X, 2) - num_cond
+    # Slice off the conditioning days
+    # TODO: The convolution we're doing is for the PAST days, not current `t`, while
+    # `conv` implements a convolution which involves the current day.
+    # Instead maybe we should make `conv` use the "shifted" convolution, i.e. for all
+    # PREVIOUS `t`.
+    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+
+    # Repeat one too many times and then extract the desired section `1:num_regions`
+    num_days = size(expected_positive_tests, 2)
+    weekly_case_variation = transpose(
+        repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
+    )
+    expected_positive_tests_weekly_adj = expected_positive_tests .* weekly_case_variation
+
+    # We extract only the time-steps after the imputation-step
+    T = eltype(expected_positive_tests_weekly_adj)
+    return sum(nbinomlogpdf3.(
+        expected_positive_tests_weekly_adj,
+        ϕ,
+        T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
+    ))
+end
 
 function Epimap.make_logjoint(
     ::typeof(rmap_naive),
     C, D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
+    days_per_step = 1,
+    X_cond = nothing,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
-    days_per_step = 1,
-    ::Type{TV} = Matrix{T}
-) where {T<:Real, TV}
-    function logjoint(args)
-        @unpack ψ, ϕ, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+    ::Type{TV} = Matrix{Float64}
+) where {TV}
+    num_regions = size(C, 1)
+    num_times = size(C, 2)
+    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
+    num_infer = num_times - num_cond
 
-        lp = zero(T)
+    # Execute the model once to get initial parameters.
+    m = rmap_naive(
+        C, D, W,
+        F_id, F_out, F_in,
+        K_time, K_spatial, K_local,
+        days_per_step,
+        X_cond,
+        ρ_spatial, ρ_time,
+        σ_spatial, σ_local,
+        σ_ξ,
+        TV
+    )
 
-        num_regions = size(C, 1)
-        num_times = size(C, 2)
+    vi = Turing.VarInfo(m)
+    # Adapt parameters to use desired `eltype`.
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
+    θ = adapt(adaptor, ComponentArray(vi))
+    # Construct the corresponding bijector.
+    b_orig = TuringUtils.optimize_bijector(
+        Bijectors.bijector(vi; tuplify = true)
+    )
+    # Adapt bijector parameters to use desired `eltype`.
+    b = fmap(b_orig) do x
+        adapt(adaptor, x)
+    end
+    binv = inv(b)
+
+    # Ensures that we'll be using the same ordering as the original model.
+    weekly_case_variation_reindex = map(1:7) do i
+        (i + num_cond) % 7 + 1
+    end
+
+    # Converter used for standard arrays.
+    axis = first(ComponentArrays.getaxes(θ))
+    nt(x) = Epimap.tonamedtuple(x, axis)
+
+
+    function logjoint_unconstrained(args_unconstrained::AbstractVector)
+        return logjoint_unconstrained(nt(args_unconstrained))
+    end
+    function logjoint_unconstrained(args_unconstrained::Union{NamedTuple, ComponentArray})
+        args, logjac = forward(binv, args_unconstrained)
+        return logjoint(args) + logjac
+    end
+
+    logjoint(args::AbstractVector) = logjoint(nt(args))
+    function logjoint(args::Union{NamedTuple, ComponentArray})
+        # TODO: This should unpack model-arguments which are `missing` too!
+        # Should maybe just use the `θ` sampled to do so.
+        @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+
+        # Ensure that the univariates are treated as 0-dims
+        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ
+
+        X = if X isa AbstractVector
+            # Need to reshape
+            reshape(X, num_regions, :)
+        else
+            X
+        end
+
+        T = eltype(ψ) # TODO: Should probably find a better way to deal with this
+
+        μ₀ = zero(T)
+        σ₀ = T(5)
+
+        lb = zero(T)
+        ub = T(Inf)
+
+        # tack the conditioning X's back on to the samples
+        X = X_cond === nothing ? X : hcat(X_cond, X)
+
+        @assert num_infer % days_per_step == 0
+        num_steps = num_infer ÷ days_per_step
 
         prev_infect_cutoff = length(W)
         test_delay_cutoff = length(D)
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = truncatednormlogpdf(0, 5, ψ, 0, Inf)
+        lp = lowerboundednormlogpdf(μ₀, σ₀, ψ, lb)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(truncatednormlogpdf.(0, 5, ϕ, 0, Inf))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ϕ, lb))
+
+        # Weekly case variation
+        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
 
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, ρ_spatial, 0, Inf))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_spatial, lb))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, ρ_time, 0, Inf))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_time, lb))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, σ_spatial, 0, Inf))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_spatial, lb))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(truncatednormlogpdf.(0, 5, σ_local, 0, Inf))
+        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_local, lb))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
         lp += sum(normlogpdf.(E_vec))
-        E = reshape(E_vec, (num_regions, num_times))
+        E = reshape(E_vec, (num_regions, num_steps))
 
         # Get cholesky decomps using precomputed kernel matrices
         L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
@@ -266,7 +415,8 @@ function Epimap.make_logjoint(
 
         # Obtain the sample
         f = L_space * E * U_time
-        R = exp.(f)
+        # Repeat Rt to get Rt for every day in constant region
+        R = repeat(exp.(f), inner=(1, days_per_step))
 
         ### Flux ###
         # Flux parameters
@@ -276,62 +426,70 @@ function Epimap.make_logjoint(
         # AR(1) prior
         # set mean of process to be 0.1, 1 std = 0.024-0.33
         # μ_ar ~ Normal(-2.19, 0.25)
-        lp += normlogpdf(-2.19, 0.25, μ_ar)
+        lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += normlogpdf(0.0, 0.25, σ_ar)
+        lp += lowerboundednormlogpdf(T(0.0), T(0.25), σ_ar, lb)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).
-        σ_α = 1 - exp(- days_per_step / 28)
+        σ_α = 1 - exp(- days_per_step / T(28))
         # α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-        b_α_pre = inv(Bijectors.Logit(0.0, 1.0))
-        lp += normlogpdf(b_α_pre(α_pre)) + logabsdetjac(b_α_pre, α_pre)
+        b_α_pre = Bijectors.Logit(zero(T), one(T))
+        α_pre_unconstrained, α_pre_logjac = forward(b_α_pre, α_pre)
+        lp += normlogpdf(μ₀, σ_α, α_pre_unconstrained) + α_pre_logjac
         α = 1 - α_pre
 
         # Use bijector to transform to have support (0, 1) rather than ℝ.
-        b_ρₜ = Bijectors.Logit{1, Float64}(0.0, 1.0)
+        b_ρₜ = Bijectors.Logit{1}(zero(T), one(T))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
-        lp += logpdf(transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
+        lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
+        # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
+        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += truncatednormlogpdf.(0, 5, σ_ξ, 0, Inf)
+        lp += lowerboundednormlogpdf.(μ₀, σ₀, σ_ξ, lb)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += truncatednormlogpdf.(0, σ_ξ, ξ, 0, Inf)
+        lp += lowerboundednormlogpdf.(μ₀, σ_ξ, ξ, lb)
 
-        # TODO: move the computation of `Z̃ₜ` into a function, so we can define a custom adjoint for it,
-        # to allow Zygote.jl/reverse-mode AD compatibility.
-        X = TV(undef, (num_regions, num_times))
+        # for t = 2:num_times
+        #     # Flux matrix
+        #     Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
-        X[:, 1] .= 0
+        #     # Eq. (4) but we also add in the observed cases `C` at each time
+        #     ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
+        #     Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
+        #     Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
-        for t = 2:num_times
-            # Flux matrix
-            Fₜ = @. ρₜ[t] * F_id + (1 - ρₜ[t]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        #     # Use continuous approximation
+        #     μ = R[:, t] .* Z̃ₜ .+ ξ
+        #     # # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
+        #     # for i = 1:num_regions
+        #     #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
+        #     # end
+        #     lp += sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
+        # end
+        # NOTE: This is the part which is the slowest.
+        # Adds almost a second to the gradient computation for certain "standard" setups.
+        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
 
-            # Eq. (4) but we also add in the observed cases `C` at each time
-            ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-            Zₜ = (X[:, ts_prev_infect] + C[:, ts_prev_infect]) * W[1:min(prev_infect_cutoff, t - 1)]
-            Z̃ₜ = Fₜ * Zₜ # Eq. (5)
+        # for t = num_impute:num_times
+        #     # Observe
+        #     ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
+        #     expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
 
-            # Use continuous approximation
-            μ = R[:, t] .* Z̃ₜ .+ ξ
-            # # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
-            # for i = 1:num_regions
-            #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
-            # end
-            lp += truncatednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t])
-
-            # Observe
-            ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
-            expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-
-            # for i = 1:num_regions
-            #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
-            # end
-            lp += loglikelihood(arraydist(NegativeBinomial3.(expected_positive_tests, ϕ)), C[:, t])
-        end
+        #     # for i = 1:num_regions
+        #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
+        #     # end
+        # end
+        lp += _loglikelihood(
+            C, X, D, ϕ,
+            weekly_case_variation[weekly_case_variation_reindex],
+            num_cond
+        )
 
         return lp
     end
+
+    return (logjoint, logjoint_unconstrained, b, θ)
 end

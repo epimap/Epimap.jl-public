@@ -1,9 +1,12 @@
 module Epimap
 
 import Random
-import StatsFuns
+import StatsFuns, SpecialFunctions
+import NNlib, PDMats
+import ComponentArrays
 
-using Turing, Distributions
+using Reexport
+@reexport using Turing, Distributions
 using DocStringExtensions
 
 export Rmap,
@@ -24,8 +27,10 @@ The method should at least be able to handle the arguments passed as a flattened
 """
 make_logjoint(model_def, args...) = Turing.Variational.make_logjoint(model_def(args...))
 
-
+include("temporary_hacks.jl")
+include("adapt.jl")
 include("utils.jl")
+include("conv.jl")
 include("distributions.jl")
 
 include("models/rmap/Rmap.jl")
