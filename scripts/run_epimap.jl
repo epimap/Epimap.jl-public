@@ -49,7 +49,7 @@ metric = DiagEuclideanMetric(T, D)
 hamiltonian = Hamiltonian(metric, logπ_unconstrained, Zygote)
 
 # Get initial parameters.
-ϕ_init = rand(T, D)
+# ϕ_init = rand(T, D)
 
 # Find a good step-size.
 @info "Finding a good stepsize..."
@@ -87,7 +87,7 @@ it = AbstractMCMC.steps(
 # Initial sample.
 @info "Obtaining initial sample..."
 transition, state = iterate(it);
-@info "Initial sample" transition.stats
+@info "Initial sample" transition.stat
 
 # Create the sample container.
 samples = AbstractMCMC.samples(transition, model, sampler);
@@ -98,6 +98,8 @@ states = [state];
 # Sample!
 @info "Sampling!"
 for i = 1:nsamples
+    global transition, state
+
     # Step
     transition, state = iterate(it, state)
     
