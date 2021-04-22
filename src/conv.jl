@@ -10,7 +10,7 @@ Convolve `x` with filter/window `w`. Assumes `w` is "smallest" size.
 - We return the left-padded convolution, NOT the symmetrically padded convolution.
   That is, we compute `x[t - i] * w[i] for  i = 1:t` only for `t = 1, ..., length(x)`
 """
-conv(x, w) = conv_fft(x, w)
+conv(x, w) = conv_nnlib(x, w)
 
 # Convenience method for the Matrix × Vector cases.
 for f in [:conv_fft, :conv_dsp]
