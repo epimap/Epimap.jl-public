@@ -4,7 +4,7 @@
 
 using BenchmarkTools
 
-using Epimap, Adapt, Zygote
+using Epimap, Adapt, Zygote, Dates
 using Epimap.Turing
 
 # Useful for benchmarks
@@ -35,41 +35,31 @@ setup_args = merge(Rmap.setup_args(
     num_condition_days = 30
 ), default_args);
 
-# Instantiate model
-m = Rmap.rmap_naive(setup_args...);
-
-# HACK: using Turing to get a sample from the prior
-var_info = DynamicPPL.VarInfo(m);
-
-num_regions = size(data.cases, 1);
-nt = map(DynamicPPL.tonamedtuple(var_info)) do (v, ks)
-    if startswith(string(first(ks)), "X")
-        # Add back in the first column since it's not inferred
-        reshape(v, (num_regions, :))
-    elseif length(v) == 1
-        first(v)
-    else
-        v
-    end
-end;
-
 # Construct benchmark-suite
 suite = BenchmarkGroup()
 
-suite["evaluation"] = BenchmarkGroup()
-suite["gradient"] = BenchmarkGroup()
+suite["logjoint"] = BenchmarkGroup()
+suite["logjoint_unconstrained"] = BenchmarkGroup()
+
+suite["logjoint"]["evaluation"] = BenchmarkGroup()
+suite["logjoint"]["gradient"] = BenchmarkGroup()
+
+suite["logjoint_unconstrained"]["evaluation"] = BenchmarkGroup()
+suite["logjoint_unconstrained"]["gradient"] = BenchmarkGroup()
+
 for T ∈ [Float32, Float64]
-    let adaptor = Epimap.FloatMaybeAdaptor{T}(), nt = adapt(adaptor, nt), setup_args = adapt(adaptor, setup_args)
-        logπ = Epimap.make_logjoint(Rmap.rmap_naive, setup_args...)
+    logπ, logπ_unconstrained, b, θ = Epimap.make_logjoint(Rmap.rmap_naive, setup_args...)
+    ϕ = inv(b)(θ)
 
-        # HACK: Execute once to compile (does this even matter? I thought BenchmarkTools would take care of this.)
-        logπ(nt)
-        pb(logπ, T, nt)
+    # HACK: Execute once to compile (does this even matter? I thought BenchmarkTools would take care of this.)
+    pb(logπ, T, θ)
+    pb(logπ_unconstrained, T, ϕ)
 
-        suite["evaluation"]["$T"] = @benchmarkable $logπ($nt)
-        suite["gradient"]["$T"] = @benchmarkable $(pb)($logπ, $T, $nt)
+    suite["logjoint"]["evaluation"]["$T"] = @benchmarkable $logπ($θ)
+    suite["logjoint"]["gradient"]["$T"] = @benchmarkable $(pb)($logπ, $T, $θ)
 
-    end
+    suite["logjoint_unconstrained"]["evaluation"]["$T"] = @benchmarkable $logπ_unconstrained($ϕ)
+    suite["logjoint_unconstrained"]["gradient"]["$T"] = @benchmarkable $(pb)($logπ_unconstrained, $T, $ϕ)
 end
 
 suite
