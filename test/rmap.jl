@@ -1,3 +1,5 @@
+using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
+
 @testset "Rmap" begin
     data = let rmapdir = get(ENV, "EPIMAP_RMAP_DATADIR", "")
         if !isempty(rmapdir)
@@ -149,6 +151,11 @@
                 θ_ca_raw = ComponentArrays.getdata(θ_ca)
                 @test logπ(θ_ca) == logπ(θ_ca)
 
+                # Gradients
+                ∇_zy = Zygote.gradient(logπ, θ_ca)[1]
+                ∇_fd = ForwardDiff.gradient(logπ, θ_ca)
+                @test ∇_zy ≈ ∇_fd
+
                 # Unconstrained space
                 DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
                 ϕ = var_info[spl]
@@ -160,6 +167,11 @@
                 # Raw array impl
                 ϕ_ca_raw = ComponentArrays.getdata(ϕ_ca)
                 @test logπ_unconstrained(ϕ_ca) == logπ_unconstrained(ϕ_ca)
+
+                # Gradients
+                ∇_zy = Zygote.gradient(logπ_unconstrained, ϕ_ca)[1]
+                ∇_fd = ForwardDiff.gradient(logπ_unconstrained, ϕ_ca)
+                @test ∇_zy ≈ ∇_fd
 
                 # Ensure that precision is preserved
                 @test logπ(θ_ca) isa T
