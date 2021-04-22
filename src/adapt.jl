@@ -1,4 +1,4 @@
-using Adapt
+using Adapt, PDMats, LinearAlgebra
 
 """
     FloatMaybeAdaptor{T<:Real}
@@ -27,3 +27,13 @@ Adapt.adapt_storage(::FloatMaybeAdaptor, x::Integer) = x
 Adapt.adapt_storage(::FloatMaybeAdaptor{T}, x::Real) where {T} = T(x)
 Adapt.adapt_storage(::FloatMaybeAdaptor{T}, x::AbstractArray{<:Integer}) where {T} = x
 Adapt.adapt_storage(::FloatMaybeAdaptor{T}, x::AbstractArray{<:Real}) where {T} = T.(x)
+
+function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::PDMat)
+    PDMat(Adapt.adapt(adaptor, x.mat), Adapt.adapt(adaptor, x.chol))
+end
+function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::PDiagMat)
+    PDiagMat(Adapt.adapt(adaptor, x.diag), Adapt.adapt(adaptor, x.inv_diag))
+end
+function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::Cholesky)
+    Cholesky(adapt(adaptor, x.factors), adapt(adaptor, x.uplo), adapt(adaptor, x.info))
+end
