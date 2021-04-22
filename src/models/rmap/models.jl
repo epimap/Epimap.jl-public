@@ -172,7 +172,7 @@ Note that those with default value `missing` will be sampled if not specified.
     X = TV(undef, (num_regions, num_times))
 
     if X_cond !== nothing
-        X[:, 1:num_cond] = X_cond .+ ξ
+        X[:, 1:num_cond] = X_cond
     end
 
     prev_lp = DynamicPPL.getlogp(_varinfo)
@@ -351,6 +351,8 @@ function Epimap.make_logjoint(
 
     logjoint(args::AbstractVector) = logjoint(nt(args))
     function logjoint(args::Union{NamedTuple, ComponentArray})
+        # TODO: This should unpack model-arguments which are `missing` too!
+        # Should maybe just use the `θ` sampled to do so.
         @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
 
         # Ensure that the univariates are treated as 0-dims
@@ -372,7 +374,7 @@ function Epimap.make_logjoint(
         ub = T(Inf)
 
         # tack the conditioning X's back on to the samples
-        X = X_cond === nothing ? X : hcat(X_cond .+ ξ , X)
+        X = X_cond === nothing ? X : hcat(X_cond, X)
 
         @assert num_infer % days_per_step == 0
         num_steps = num_infer ÷ days_per_step
