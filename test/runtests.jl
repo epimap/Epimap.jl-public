@@ -1,12 +1,18 @@
 using Epimap
+using Epimap.Turing
+
 using StableRNGs
+using Dates
+using ComponentArrays
+using Adapt
 using Test
 
 @testset "Epimap.jl" begin
+    include("test_data.jl")
+
     include("conv.jl")
     include("distributions.jl")
+    include("dataprocessing.jl")
 
-    if !isempty(get(ENV, "EPIMAP_TEST_ALL", ""))
-        include("rmap.jl")
-    end
+    include("rmap.jl")
 end

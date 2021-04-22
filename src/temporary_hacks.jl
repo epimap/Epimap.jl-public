@@ -6,3 +6,6 @@
 # (a bit unclear if this is the below is the way to go though).
 NNlib.gen_pad(pad::NTuple{N,Tuple{Int,Int}}, dims, _) where {N} = pad
 NNlib.gen_pad(pad::NTuple{N,Tuple{Int,Int}}, dims::Colon, _) where {N} = pad
+
+# Utility overloads
+PDMats.PDMat(P::PDMats.PDMat) = P
