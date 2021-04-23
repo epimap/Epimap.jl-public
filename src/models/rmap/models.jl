@@ -229,8 +229,8 @@ end
     # end
 
     # Equivalent to the above `@tensor`
-    res1 = Epimap.kron2d(1 .- ρₜ', F_cross)
-    res2 = Epimap.kron2d(ρₜ', F_id)
+    res1 = kron(1 .- ρₜ', F_cross)
+    res2 = kron(ρₜ', F_id)
     F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
     # Convolve `X` with `W`.
