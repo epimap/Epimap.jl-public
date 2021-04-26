@@ -257,7 +257,49 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
+    return sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
+end
+
+
+@inline function logjoint_X_absnorm(F_id, F_in, F_out, β, ρₜ, X_full, W, R, ξ, ψ, num_cond)
+    # Compute the full flux
+    F_cross = @. β * F_out + (1 - β) * F_in
+    # oneminusρₜ = @. 1 - ρₜ
+    # kron(1 .- ρₜ', F_cross)
+    # F = @tensor begin
+    #     F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * F_cross[i, j]
+    # end
+
+    # Equivalent to the above `@tensor`
+    res1 = kron(1 .- ρₜ', F_cross)
+    res2 = kron(ρₜ', F_id)
+    F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
+
+    # Convolve `X` with `W`.
+    # Slice off the conditioning days.
+    Z = Epimap.conv(X_full, W)[:, num_cond:end - 1]
+
+    # Compute `Z̃` for every time-step.
+    # This is equivalent to
+    #
+    #   NNlib.batched_mul(F, reshape(Z, size(Z, 1), 1, size(Z, 2)))
+    #
+    # where we get
+    #
+    #   Z̃[:, k] := F[:, :, k] * Z[:, k]
+    #
+    # which is exactly what we want.
+    Z̃ = NNlib.batched_vec(F, Z)
+
+    # Compute the mean for the different regions at every time-step
+    # HACK: seems like it can sometimes be negative due to numerical issues,
+    # so we just `abs` to be certain. This is a bit hacky though.
+    μ = abs.(R .* Z̃ .+ ξ)
+
+    # At this point `μ` will be of size `(num_regions, num_timesteps)`
+    T = eltype(μ)
+    X = X_full[:, (num_cond + 1):end]
+    return sum(StatsFuns.normlogpdf.(μ, sqrt.((1 + ψ) .* μ), X))
 end
 
 
@@ -384,9 +426,9 @@ function Epimap.make_logjoint(
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = lowerboundednormlogpdf(μ₀, σ₀, ψ, lb)
+        lp = halfnormallogpdf(μ₀, σ₀, ψ, lb)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ϕ, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ϕ, lb))
 
         # Weekly case variation
         lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
@@ -394,15 +436,15 @@ function Epimap.make_logjoint(
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_spatial, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_spatial, lb))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, ρ_time, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_time, lb))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_spatial, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_spatial, lb))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(lowerboundednormlogpdf.(μ₀, σ₀, σ_local, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_local, lb))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -428,7 +470,7 @@ function Epimap.make_logjoint(
         # μ_ar ~ Normal(-2.19, 0.25)
         lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += lowerboundednormlogpdf(T(0.0), T(0.25), σ_ar, lb)
+        lp += halfnormallogpdf(T(0.0), T(0.25), σ_ar, lb)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).
@@ -448,9 +490,9 @@ function Epimap.make_logjoint(
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += lowerboundednormlogpdf.(μ₀, σ₀, σ_ξ, lb)
+        lp += halfnormallogpdf.(μ₀, σ₀, σ_ξ, lb)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += lowerboundednormlogpdf.(μ₀, σ_ξ, ξ, lb)
+        lp += halfnormallogpdf.(μ₀, σ_ξ, ξ, lb)
 
         # for t = 2:num_times
         #     # Flux matrix
@@ -467,11 +509,11 @@ function Epimap.make_logjoint(
         #     # for i = 1:num_regions
         #     #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
         #     # end
-        #     lp += sum(lowerboundednormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
+        #     lp += sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
-        lp += logjoint_X(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
+        lp += logjoint_X_absnorm(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
         #     # Observe

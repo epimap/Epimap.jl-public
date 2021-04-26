@@ -17,6 +17,12 @@ function lowerboundednormlogpdf(μ, σ, x, lb)
     return StatsFuns.normlogpdf(μ, σ, x) - logtp
 end
 
+function halfnormallogpdf(μ::T, σ::T, x::T) where {T<:Real}
+    logtp = log(1 - StatsFuns.normcdf(μ, σ, zero(T)))
+    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+end
+
+
 """
     truncatednormlogpdf(μ, σ, x, lb, ub)
 
