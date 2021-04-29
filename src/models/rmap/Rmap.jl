@@ -8,6 +8,7 @@ import ..Epimap:
     𝒩₊,
     lowerboundednormlogpdf,
     truncatednormlogpdf,
+    halfnormallogpdf,
     nbinomlogpdf3
 
 import Random

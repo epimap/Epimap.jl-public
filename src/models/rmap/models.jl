@@ -219,7 +219,7 @@ Note that those with default value `missing` will be sampled if not specified.
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
-@inline function logjoint_X(F_id, F_in, F_out, β, ρₜ, X_full, W, R, ξ, ψ, num_cond)
+function compute_flux(F_id, F_in, F_out, β, ρₜ)
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
     # oneminusρₜ = @. 1 - ρₜ
@@ -233,6 +233,14 @@ end
     res2 = kron(ρₜ', F_id)
     F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
+    return F
+end
+
+function logjoint_X(F, X_full, W, R, ξ, ψ, num_cond)
+    return logjoint_X_halfnorm(F, X_full, W, R, ξ, ψ, num_cond)
+end
+
+@inline function logjoint_X_halfnorm(F, X_full, W, R, ξ, ψ, num_cond)
     # Convolve `X` with `W`.
     # Slice off the conditioning days.
     Z = Epimap.conv(X_full, W)[:, num_cond:end - 1]
@@ -257,24 +265,11 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X, zero(T)))
+    return sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X))
 end
 
 
-@inline function logjoint_X_absnorm(F_id, F_in, F_out, β, ρₜ, X_full, W, R, ξ, ψ, num_cond)
-    # Compute the full flux
-    F_cross = @. β * F_out + (1 - β) * F_in
-    # oneminusρₜ = @. 1 - ρₜ
-    # kron(1 .- ρₜ', F_cross)
-    # F = @tensor begin
-    #     F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * F_cross[i, j]
-    # end
-
-    # Equivalent to the above `@tensor`
-    res1 = kron(1 .- ρₜ', F_cross)
-    res2 = kron(ρₜ', F_id)
-    F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
-
+@inline function logjoint_X_absnorm(F, X_full, W, R, ξ, ψ, num_cond)
     # Convolve `X` with `W`.
     # Slice off the conditioning days.
     Z = Epimap.conv(X_full, W)[:, num_cond:end - 1]
@@ -327,6 +322,10 @@ end
         ϕ,
         T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
     ))
+end
+
+@inline function rmap_loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
+    return _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
 end
 
 function Epimap.make_logjoint(
@@ -426,9 +425,9 @@ function Epimap.make_logjoint(
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = halfnormallogpdf(μ₀, σ₀, ψ, lb)
+        lp = halfnormallogpdf(μ₀, σ₀, ψ)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ϕ, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ϕ))
 
         # Weekly case variation
         lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
@@ -436,15 +435,15 @@ function Epimap.make_logjoint(
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_spatial, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_spatial))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_time, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_time))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_spatial, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_spatial))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_local, lb))
+        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_local))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -470,7 +469,7 @@ function Epimap.make_logjoint(
         # μ_ar ~ Normal(-2.19, 0.25)
         lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += halfnormallogpdf(T(0.0), T(0.25), σ_ar, lb)
+        lp += halfnormallogpdf(T(0.0), T(0.25), σ_ar)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).
@@ -485,14 +484,12 @@ function Epimap.make_logjoint(
         b_ρₜ = Bijectors.Logit{1}(zero(T), one(T))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
-        # Repeat ρₜ to get ρₜ for every day in constant region (after computing original ρₜ log prob)
-        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += halfnormallogpdf.(μ₀, σ₀, σ_ξ, lb)
+        lp += halfnormallogpdf.(μ₀, σ₀, σ_ξ)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += halfnormallogpdf.(μ₀, σ_ξ, ξ, lb)
+        lp += halfnormallogpdf.(μ₀, σ_ξ, ξ)
 
         # for t = 2:num_times
         #     # Flux matrix
@@ -513,7 +510,10 @@ function Epimap.make_logjoint(
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
-        lp += logjoint_X_absnorm(F_id, F_in, F_out, β, ρₜ, X, W, R, ξ, ψ, num_cond)
+        F = compute_flux(F_id, F_in, F_out, β, ρₜ)
+        # Repeat F along time-dimension to get F for every day in constant region.
+        F_expanded = repeat(F, inner=(1, 1, days_per_step))
+        lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
         #     # Observe
@@ -524,7 +524,7 @@ function Epimap.make_logjoint(
         #     #     C[i, t] ~ NegativeBinomial3(expected_positive_tests[i], ϕ[i])
         #     # end
         # end
-        lp += _loglikelihood(
+        lp += rmap_loglikelihood(
             C, X, D, ϕ,
             weekly_case_variation[weekly_case_variation_reindex],
             num_cond
