@@ -1,4 +1,4 @@
-using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
+using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
 @testset "Rmap" begin
     data = let rmapdir = get(ENV, "EPIMAP_RMAP_DATADIR", "")
@@ -179,6 +179,27 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
                 @test logπ_unconstrained(ϕ_ca) isa T
                 @test logπ_unconstrained(ϕ_ca_raw) isa T
             end
+        end
+    end
+
+    @testset "flux" begin
+        for T ∈ [Float32, Float64]
+            adaptor = Epimap.FloatMaybeAdaptor{T}()
+            # Instantiate model
+            args = make_default_args(data, T)
+
+            # `make_logjoint`
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(
+                Rmap.rmap_naive,
+                args...,
+                Matrix{T}
+            )
+
+            @unpack F_id, F_in, F_out = args
+            @unpack β, ρₜ = θ_init
+            F = Rmap.compute_flux(F_id, F_in, F_out, β, ρₜ)
+
+            @test all(sum(F, dims=2) .≈ 1)
         end
     end
 
