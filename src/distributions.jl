@@ -17,10 +17,12 @@ function lowerboundednormlogpdf(μ, σ, x, lb)
     return StatsFuns.normlogpdf(μ, σ, x) - logtp
 end
 
+# HACK: The way `zval` is computed within `StatsFuns.normlogdf` and `StatsFuns.normcdf`
+# causes type-instabilities for AD-frameworks.
 function halfnormallogpdf(μ, σ, x)
-    T = promote_type(eltype(μ), eltype(σ), eltype(x))
-    logtp = log(1 - StatsFuns.normcdf(μ, σ, zero(T)))
-    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+    # Just compute the zval instead of messing around with types to `zero(T)`.
+    logtp = log(1 - StatsFuns.normcdf(-μ / σ))
+    return StatsFuns.normlogpdf((x - μ) / σ) - logtp
 end
 
 

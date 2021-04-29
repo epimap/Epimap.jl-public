@@ -294,7 +294,8 @@ end
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(StatsFuns.normlogpdf.(μ, sqrt.((1 + ψ) .* μ), X))
+    σ = sqrt.((1 + ψ) .* μ)
+    return sum(StatsFuns.normlogpdf.((X - μ) / σ))
 end
 
 
@@ -317,7 +318,8 @@ end
 
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests_weekly_adj)
-    return sum(nbinomlogpdf3.(
+    return sum(map(
+        nbinomlogpdf3,
         expected_positive_tests_weekly_adj,
         ϕ,
         T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
@@ -484,6 +486,7 @@ function Epimap.make_logjoint(
         b_ρₜ = Bijectors.Logit{1}(zero(T), one(T))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
+        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
@@ -511,8 +514,9 @@ function Epimap.make_logjoint(
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
         F = compute_flux(F_id, F_in, F_out, β, ρₜ)
+        F_expanded = F
         # Repeat F along time-dimension to get F for every day in constant region.
-        F_expanded = repeat(F, inner=(1, 1, days_per_step))
+        # F_expanded = repeat(F, inner=(1, 1, days_per_step))
         lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond)
 
         # for t = num_impute:num_times
