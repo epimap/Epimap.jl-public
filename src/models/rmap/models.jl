@@ -175,8 +175,6 @@ Note that those with default value `missing` will be sampled if not specified.
         X[:, 1:num_cond] = X_cond
     end
 
-    prev_lp = DynamicPPL.getlogp(_varinfo)
-
     for t = (num_cond + 1):num_times
         # compute the index of the step this day is in
         t_step = (t - num_cond - 1) ÷ days_per_step + 1
@@ -222,16 +220,28 @@ end
 function compute_flux(F_id, F_in, F_out, β, ρₜ)
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
-    # oneminusρₜ = @. 1 - ρₜ
-    # kron(1 .- ρₜ', F_cross)
+    oneminusρₜ = @. 1 - ρₜ
+
+    # Tullio.jl doesn't seem to work nicely with `Diagonal`.
+    F_id_ = F_id isa Diagonal ? Matrix(F_id) : F_id
+
+    @tullio F[i, j, t] := oneminusρₜ[t] * F_cross[i, j] + ρₜ[t] * F_id_[i, j]
+
+    # # NOTE: Doesn't seem faster than the above code.
+    # # Everything within one operation to minimize memory-allocation.
+    # # Also allows us to not compute gradients through the flux-matrices!
+    # β_arr = FillArrays.Fill(β, size(F_id))
+    # oneminusβ_arr = FillArrays.Fill(1 - β, size(F_id))
+    # @tullio F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * (β_arr[i, j] * F_out[i, j] + oneminusβ_arr[i, j] * F_in[i, j]) nograd=(F_id, F_in, F_out)
+
     # F = @tensor begin
     #     F[i, j, t] := ρₜ[t] * F_id[i, j] + oneminusρₜ[t] * F_cross[i, j]
     # end
 
-    # Equivalent to the above `@tensor`
-    res1 = kron(1 .- ρₜ', F_cross)
-    res2 = kron(ρₜ', F_id)
-    F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
+    # # Equivalent to the above `@tensor`
+    # res1 = kron(1 .- ρₜ', F_cross)
+    # res2 = kron(ρₜ', F_id)
+    # F = reshape(res2 + res1, size(F_cross)..., length(ρₜ))
 
     return F
 end
@@ -260,12 +270,12 @@ end
     # Compute the mean for the different regions at every time-step
     # HACK: seems like it can sometimes be negative due to numerical issues,
     # so we just `abs` to be certain. This is a bit hacky though.
-    μ = abs.(R .* Z̃ .+ ξ)
+    μ = R .* Z̃ .+ ξ
 
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
-    return sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X))
+    return sum(halfnormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X))
 end
 
 
@@ -289,7 +299,7 @@ end
     # Compute the mean for the different regions at every time-step
     # HACK: seems like it can sometimes be negative due to numerical issues,
     # so we just `abs` to be certain. This is a bit hacky though.
-    μ = abs.(R .* Z̃ .+ ξ)
+    μ = map(abs, R .* Z̃ .+ ξ)
 
     # At this point `μ` will be of size `(num_regions, num_timesteps)`
     T = eltype(μ)
@@ -399,7 +409,7 @@ function Epimap.make_logjoint(
         @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
 
         # Ensure that the univariates are treated as 0-dims
-        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ
+        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ β
 
         X = if X isa AbstractVector
             # Need to reshape

@@ -24,6 +24,7 @@ using PDMats
 using UnPack
 using DocStringExtensions
 using TensorOperations
+using Tullio
 
 using TuringUtils, ComponentArrays
 
