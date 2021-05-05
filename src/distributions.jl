@@ -19,7 +19,7 @@ end
 
 # HACK: The way `zval` is computed within `StatsFuns.normlogdf` and `StatsFuns.normcdf`
 # causes type-instabilities for AD-frameworks.
-function halfnormallogpdf(μ, σ, x)
+function halfnormlogpdf(μ, σ, x)
     # Just compute the zval instead of messing around with types to `zero(T)`.
     logtp = log(1 - StatsFuns.normcdf(-μ / σ))
     return StatsFuns.normlogpdf((x - μ) / σ) - logtp

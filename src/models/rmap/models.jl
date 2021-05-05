@@ -427,9 +427,9 @@ function Epimap.make_logjoint(
 
         # Noise for cases
         # ψ ~ 𝒩₊(0, 5)
-        lp = halfnormallogpdf(μ₀, σ₀, ψ)
+        lp = halfnormlogpdf(μ₀, σ₀, ψ)
         # ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ϕ))
+        lp += sum(halfnormlogpdf.(μ₀, σ₀, ϕ))
 
         # Weekly case variation
         lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
@@ -437,15 +437,15 @@ function Epimap.make_logjoint(
         ### GP prior ###
         # Length scales
         # ρ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_spatial))
+        lp += sum(halfnormlogpdf.(μ₀, σ₀, ρ_spatial))
         # ρ_time ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, ρ_time))
+        lp += sum(halfnormlogpdf.(μ₀, σ₀, ρ_time))
 
         # Scales
         # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_spatial))
+        lp += sum(halfnormlogpdf.(μ₀, σ₀, σ_spatial))
         # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(halfnormallogpdf.(μ₀, σ₀, σ_local))
+        lp += sum(halfnormlogpdf.(μ₀, σ₀, σ_local))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -471,7 +471,7 @@ function Epimap.make_logjoint(
         # μ_ar ~ Normal(-2.19, 0.25)
         lp += normlogpdf(T(-2.19), T(0.25), μ_ar)
         # σ_ar ~ 𝒩₊(0.0, 0.25)
-        lp += halfnormallogpdf(T(0.0), T(0.25), σ_ar)
+        lp += halfnormlogpdf(T(0.0), T(0.25), σ_ar)
 
         # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
         # wrt. number of days used in each time-step (specified by `days_per_step`).
@@ -490,9 +490,9 @@ function Epimap.make_logjoint(
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
-        lp += halfnormallogpdf.(μ₀, σ₀, σ_ξ)
+        lp += halfnormlogpdf.(μ₀, σ₀, σ_ξ)
         # ξ ~ 𝒩₊(0, σ_ξ)
-        lp += halfnormallogpdf.(μ₀, σ_ξ, ξ)
+        lp += halfnormlogpdf.(μ₀, σ_ξ, ξ)
 
         # for t = 2:num_times
         #     # Flux matrix
@@ -509,7 +509,7 @@ function Epimap.make_logjoint(
         #     # for i = 1:num_regions
         #     #     X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
         #     # end
-        #     lp += sum(halfnormallogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
+        #     lp += sum(halfnormlogpdf.(μ, sqrt.((1 + ψ) .* μ), X[:, t], 0, Inf))
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
