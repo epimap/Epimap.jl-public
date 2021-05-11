@@ -305,7 +305,7 @@ end
     T = eltype(μ)
     X = X_full[:, (num_cond + 1):end]
     σ = sqrt.((1 + ψ) .* μ)
-    return sum(StatsFuns.normlogpdf.((X - μ) / σ))
+    return sum(StatsFuns.normlogpdf.((X - μ) / σ) .- log.(σ))
 end
 
 
@@ -328,8 +328,7 @@ end
 
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests_weekly_adj)
-    return sum(map(
-        nbinomlogpdf3,
+    return sum(nbinomlogpdf3.(
         expected_positive_tests_weekly_adj,
         ϕ,
         T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
@@ -423,8 +422,6 @@ function Epimap.make_logjoint(
         μ₀ = zero(T)
         σ₀ = T(5)
 
-        lb = zero(T)
-        ub = T(Inf)
 
         # tack the conditioning X's back on to the samples
         X = X_cond === nothing ? X : hcat(X_cond, X)

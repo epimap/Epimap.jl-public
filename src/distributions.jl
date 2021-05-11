@@ -13,8 +13,9 @@ if-statements to check if the bounds are finite.
 `lowerobundednormlogpdf` is therefore useful to avoid these if-statements.
 """
 function lowerboundednormlogpdf(μ, σ, x, lb)
-    logtp = log(1 - StatsFuns.normcdf(μ, σ, lb))
-    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+    lcdf = isinf(lb) ? zero(lb) : StatsFuns.normcdf((lb - μ) / σ)
+    logtp = log(1 - lcdf)
+    return StatsFuns.normlogpdf((x - μ) / σ) - log(σ) - logtp
 end
 
 # HACK: The way `zval` is computed within `StatsFuns.normlogdf` and `StatsFuns.normcdf`
@@ -22,7 +23,7 @@ end
 function halfnormlogpdf(μ, σ, x)
     # Just compute the zval instead of messing around with types to `zero(T)`.
     logtp = log(1 - StatsFuns.normcdf(-μ / σ))
-    return StatsFuns.normlogpdf((x - μ) / σ) - logtp
+    return StatsFuns.normlogpdf((x - μ) / σ) - log(σ) - logtp
 end
 
 
@@ -35,7 +36,7 @@ function truncatednormlogpdf(μ, σ, x, lb, ub)
     lcdf = isinf(lb) ? zero(lb) : StatsFuns.normcdf(μ, σ, lb)
     ucdf = isinf(ub) ? one(ub) : StatsFuns.normcdf(μ, σ, ub)
     logtp = log(ucdf - lcdf)
-    return StatsFuns.normlogpdf(μ, σ, x) - logtp
+    return StatsFuns.normlogpdf((x - μ) / σ) - log(σ) - logtp
 end
 
 
