@@ -271,6 +271,14 @@ function setup_args(
     F_out = Array(traffic_flux_out[1:end, 2:end])
     F_in = Array(traffic_flux_in[1:end, 2:end])
 
+    # Normalize rows in the flux-matrices, ensuring that they sum to 1.
+    for row in eachslice(F_in, dims=1)
+        normalize!(row, 1)
+    end
+    for row in eachslice(F_out, dims=1)
+        normalize!(row, 1)
+    end
+
     # Resulting arguments
     result = (
         C = cases,
