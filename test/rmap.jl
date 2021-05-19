@@ -1,4 +1,4 @@
-using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
+using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
 @testset "Rmap" begin
     data = let rmapdir = get(ENV, "EPIMAP_RMAP_DATADIR", "")
@@ -115,7 +115,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
         for T ∈ [Float32, Float64]
             adaptor = Epimap.FloatMaybeAdaptor{T}()
             # Use different threshold if `Float32` since we're comparing to use of `Float64`.
-            threshold = (T === Float32) ? 5 : 1
+            threshold = (T === Float32) ? 1 : 1
             num_repeats = 10
 
             # Instantiate model
@@ -149,7 +149,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
                 @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ threshold
                 # Raw array impl
                 θ_ca_raw = ComponentArrays.getdata(θ_ca)
-                @test logπ(θ_ca) == logπ(θ_ca)
+                @test logπ(θ_ca) == logπ(θ_ca_raw)
 
                 # Gradients
                 ∇_zy = Zygote.gradient(logπ, θ_ca)[1]
@@ -166,7 +166,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
                 @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ threshold
                 # Raw array impl
                 ϕ_ca_raw = ComponentArrays.getdata(ϕ_ca)
-                @test logπ_unconstrained(ϕ_ca) == logπ_unconstrained(ϕ_ca)
+                @test logπ_unconstrained(ϕ_ca) == logπ_unconstrained(ϕ_ca_raw)
 
                 # Gradients
                 ∇_zy = Zygote.gradient(logπ_unconstrained, ϕ_ca)[1]
@@ -179,6 +179,27 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays
                 @test logπ_unconstrained(ϕ_ca) isa T
                 @test logπ_unconstrained(ϕ_ca_raw) isa T
             end
+        end
+    end
+
+    @testset "flux" begin
+        for T ∈ [Float32, Float64]
+            adaptor = Epimap.FloatMaybeAdaptor{T}()
+            # Instantiate model
+            args = make_default_args(data, T)
+
+            # `make_logjoint`
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(
+                Rmap.rmap_naive,
+                args...,
+                Matrix{T}
+            )
+
+            @unpack F_id, F_in, F_out = args
+            @unpack β, ρₜ = θ_init
+            F = Rmap.compute_flux(F_id, F_in, F_out, β, ρₜ)
+
+            @test all(sum(F, dims=2) .≈ 1)
         end
     end
 

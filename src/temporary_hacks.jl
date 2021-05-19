@@ -9,3 +9,9 @@ NNlib.gen_pad(pad::NTuple{N,Tuple{Int,Int}}, dims::Colon, _) where {N} = pad
 
 # Utility overloads
 PDMats.PDMat(P::PDMats.PDMat) = P
+
+#############
+### Rules ###
+#############
+# Temporary fix for https://github.com/JuliaDiff/ChainRules.jl/issues/402.
+ChainRulesCore.@scalar_rule(SpecialFunctions.erfc(x), -(2 * exp(-x * x)) / StatsFuns.sqrtπ)

@@ -1,9 +1,11 @@
 module Epimap
 
 import Random
-import StatsFuns, SpecialFunctions
+import ChainRulesCore, SpecialFunctions, StatsFuns
 import NNlib, PDMats
 import ComponentArrays
+
+using Tullio
 
 using Reexport
 @reexport using Turing, Distributions

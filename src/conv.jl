@@ -10,7 +10,7 @@ Convolve `x` with filter/window `w`. Assumes `w` is "smallest" size.
 - We return the left-padded convolution, NOT the symmetrically padded convolution.
   That is, we compute `x[t - i] * w[i] for  i = 1:t` only for `t = 1, ..., length(x)`
 """
-conv(x, w) = conv_nnlib(x, w)
+conv(x, w) = conv_tullio(x, w)
 
 # Convenience method for the Matrix × Vector cases.
 for f in [:conv_fft, :conv_dsp]
@@ -140,4 +140,10 @@ function conv_fft(u::AbstractArray, v::AbstractArray)
     vft = AbstractFFTs.fft(real(vpad))
 
     return real(AbstractFFTs.ifft(uft .* vft))[CartesianIndices(u)]
+end
+
+# TODO: Make it NOT pad around on the right.
+function conv_tullio(u::AbstractMatrix, v::AbstractVector)
+    res = @tullio w[i+_, j+_] := u[i, pad(j - b, length(v) - 1)] * v[b]
+    return res[:, 1:end - length(v) + 1]
 end

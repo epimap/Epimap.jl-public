@@ -43,7 +43,7 @@ end
     # TODO: test `logpdf` somehow
 end
 
-@testset "truncatednormlogpdf" begin
+@testset "norm logpdfs" begin
     rng = StableRNG(42);
 
     μs = [0.0, 1.0]
@@ -60,4 +60,19 @@ end
 
         @test logpdf(target, x) ≈ Rmap.truncatednormlogpdf(μ, σ, x, lb, ub)
     end
+
+    for μ in μs, σ in σs, lb in lbs
+        target = truncated(Normal(μ, σ), lb, Inf)
+        x = rand(target)
+
+        @test logpdf(target, x) ≈ Rmap.lowerboundednormlogpdf(μ, σ, x, lb)
+    end
+
+    for μ in μs, σ in σs
+        target = truncated(Normal(μ, σ), 0, Inf)
+        x = rand(target)
+
+        @test logpdf(target, x) ≈ Rmap.halfnormlogpdf(μ, σ, x)
+    end
 end
+

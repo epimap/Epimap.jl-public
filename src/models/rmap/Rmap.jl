@@ -8,11 +8,13 @@ import ..Epimap:
     𝒩₊,
     lowerboundednormlogpdf,
     truncatednormlogpdf,
+    halfnormlogpdf,
     nbinomlogpdf3
 
 import Random
 import StatsFuns
 import NNlib
+import Zygote: FillArrays
 
 using LinearAlgebra
 using Turing
@@ -22,6 +24,7 @@ using PDMats
 using UnPack
 using DocStringExtensions
 using TensorOperations
+using Tullio
 
 using TuringUtils, ComponentArrays
 

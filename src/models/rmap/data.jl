@@ -256,20 +256,34 @@ function setup_args(
 
     ### Spatial kernel ###
     # TODO: make it this an argument?
-    centers = Array(areas[1:end, ["longitude", "latitude"]])'
+    centers = Array(areas[1:end, ["longitude", "latitude"]])
     k_spatial = Matern12Kernel()
-    K_spatial = PDMat(kernelmatrix(k_spatial, centers))
+    spatial_distances = KernelFunctions.pairwise(
+        KernelFunctions.Haversine(),
+        KernelFunctions.RowVecs(centers)
+    ) ./ 100_000 # want in units of 100km
+    K_spatial = PDMat(map(Base.Fix1(KernelFunctions.kappa, k_spatial), spatial_distances))
     K_local = PDiagMat(ones(num_regions))
 
     ### Temporal kernel ###
     # TODO: make it this an argument?
     k_time = Matern12Kernel()
-    K_time = PDMat(kernelmatrix(k_time, 1:days_per_step:num_infer))
+    times = 1:days_per_step:num_infer
+    time_distances = KernelFunctions.pairwise(KernelFunctions.Euclidean(), times)
+    K_time = PDMat(map(Base.Fix1(KernelFunctions.kappa, k_time), time_distances))
 
     # Flux matrices
     F_id = Diagonal(ones(num_regions))
     F_out = Array(traffic_flux_out[1:end, 2:end])
     F_in = Array(traffic_flux_in[1:end, 2:end])
+
+    # Normalize rows in the flux-matrices, ensuring that they sum to 1.
+    for row in eachslice(F_in, dims=1)
+        normalize!(row, 1)
+    end
+    for row in eachslice(F_out, dims=1)
+        normalize!(row, 1)
+    end
 
     # Resulting arguments
     result = (
