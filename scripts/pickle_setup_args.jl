@@ -21,6 +21,7 @@ parsed_args = parse_args(s)
 out_path = parsed_args["out-path"]
 for_python = parsed_args["python"]
 for_julia = parsed_args["julia"]
+for_both = (for_python && for_julia)
 
 # Determinte the output paths.
 directory_path = dirname(out_path)
@@ -29,11 +30,16 @@ filename = if isdirpath(out_path)
     "model_args"
 else
     # If we're storing both, then we remove the extension.
-    (for_python && for_julia) ? splitext(basename(out_path))[1] : basename(out_path)
+    for_both ? splitext(basename(out_path))[1] : basename(out_path)
 end
 
-out_path_python = joinpath(directory_path, filename * ".pkl")
-out_path_julia = joinpath(directory_path, filename * ".jls")
+out_path = joinpath(directory_path, filename)
+
+# If either an extension was not provided or we removed it
+# because we're going to generate output for both files, we
+# add the corresponding extension. If there already is an extension, we leave it.
+out_path_python = isempty(splitext(out_path)[2]) ? out_path * ".pkl" : out_path
+out_path_julia = isempty(splitext(out_path)[2]) ? out_path * ".jls" : out_path
 
 # Load data and construct `setup_args`.
 println("Loading data...")
