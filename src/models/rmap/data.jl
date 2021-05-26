@@ -124,6 +124,20 @@ function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "pr
     return data
 end
 
+function compute_X_cond(cases, test_delay_profile, num_cond)
+    # For time `t` we backshift the cases from time `t + mean_test_delay_profile_int`.
+    mean_test_delay_profile = sum((1:size(test_delay_profile,1)) .* test_delay_profile)
+    mean_test_delay_profile_int = Int(floor(mean_test_delay_profile))
+    mean_test_delay_profile_rem = mean_test_delay_profile - mean_test_delay_profile_int
+
+    # Linear interoplation between the value of the floored index and the ceiled index.
+    return (
+        (1.0 - mean_test_delay_profile_rem) * cases[:, mean_test_delay_profile_int .+ (1:num_cond)]
+        + mean_test_delay_profile_rem * cases[:, 1 + mean_test_delay_profile_int .+ (1:num_cond)]
+    )
+end
+
+
 """
     setup_args(::typeof(rmap_naive), data[, T = Float64]; kwargs...)
 
@@ -228,23 +242,6 @@ function setup_args(
     normalize!(serial_intervals, 1)
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
 
-    # Compute `X_cond`
-    mean_serial_intervals = sum((1:size(serial_intervals,1)) .* serial_intervals)
-    mean_serial_intervals_int = Int(floor(mean_serial_intervals))
-    mean_serial_intervals_rem = mean_serial_intervals - mean_serial_intervals_int
-
-    # Precompute conditioning X approximation
-    X_cond = if condition_observations
-        cases[:, 1:num_cond]
-    elseif num_condition_days > 0
-        (
-            (1.0 - mean_serial_intervals_rem) * cases[:, mean_serial_intervals_int .+ (1:num_cond)]
-            + mean_serial_intervals_rem * cases[:, 1 + mean_serial_intervals_int .+ (1:num_cond)]
-        )
-    else
-        nothing
-    end
-
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
     test_delay_profile = let a = 5.8, b = 0.948
         tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
@@ -253,6 +250,15 @@ function setup_args(
         vcat(zeros(presymptomdays), tmp)
     end
     @assert sum(test_delay_profile) ≈ 1.0 "test_delay_profile does not sum to 1"
+
+    # Precompute conditioning X approximation
+    X_cond = if condition_observations
+        cases[:, 1:num_cond]
+    elseif num_condition_days > 0
+        compute_X_cond(cases, test_delay_profile, num_condition_days)
+    else
+        nothing
+    end
 
     ### Spatial kernel ###
     # TODO: make it this an argument?
