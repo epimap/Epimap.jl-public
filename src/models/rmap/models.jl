@@ -207,7 +207,7 @@ Note that those with default value `missing` will be sampled if not specified.
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
         expected_positive_tests_weekly_adj = (
-            weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
         )
         for i = 1:num_regions
             C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
@@ -324,7 +324,7 @@ end
     weekly_case_variation = transpose(
         repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
     )
-    expected_positive_tests_weekly_adj = expected_positive_tests .* weekly_case_variation
+    expected_positive_tests_weekly_adj = 7 * expected_positive_tests .* weekly_case_variation
 
     # We extract only the time-steps after the imputation-step
     T = eltype(expected_positive_tests_weekly_adj)
