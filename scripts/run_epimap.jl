@@ -47,6 +47,7 @@ default_args = (
 )
 
 args = adapt(Epimap.FloatMaybeAdaptor{T}(), merge(setup_args, default_args))
+serialize(intermediatedir(), "args.jls")
 
 # Instantiate model
 m = Rmap.rmap_naive(args...);
