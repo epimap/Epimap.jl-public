@@ -190,7 +190,7 @@ Note that those with default value `missing` will be sampled if not specified.
 
         # Use continuous approximation if the element type of `X` is non-integer.
         μ = R[:, t_step] .* Z̃ₜ .+ ξ
-        if eltype(X) <: Integer 
+        if eltype(X) <: Integer
            for i = 1:num_regions
                 X[i, t] ~ NegativeBinomial3(μ[i], ψ)
             end
@@ -217,7 +217,149 @@ Note that those with default value `missing` will be sampled if not specified.
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
-function compute_flux(F_id, F_in, F_out, β, ρₜ)
+@model function SpatioTemporalGP(
+    K_spatial, K_local, K_time,
+    σ_spatial = missing,
+    σ_local = missing,
+    ρ_spatial = missing,
+    ρ_time = missing
+)
+    num_steps = size(K_time, 1)
+    num_regions = size(K_spatial, 1)
+
+    # Length scales
+    ρ_spatial ~ 𝒩₊(0, 5)
+    ρ_time ~ 𝒩₊(0, 5)
+
+    # Scales
+    σ_spatial ~ 𝒩₊(0, 5)
+    σ_local ~ 𝒩₊(0, 5)
+
+    # GP
+    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
+    E = reshape(E_vec, (num_regions, num_steps))
+
+    # Get cholesky decomps using precomputed kernel matrices
+    L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
+    U_time = time_U(K_time, ρ_time)
+
+    # Obtain the sample
+    f = L_space * E * U_time
+
+    return exp.(f)
+end
+
+@model function LogisticAR1(num_steps, days_per_step = 1, α_pre = missing, μ_ar = missing, σ_ar = missing)
+    # AR(1) prior
+    # set mean of process to be 0.1, 1 std = 0.024-0.33
+    μ_ar ~ Normal(-2.19, 0.25)
+    σ_ar ~ 𝒩₊(0.0, 0.25)
+
+    # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
+    # wrt. number of days used in each time-step (specified by `days_per_step`).
+    σ_α = 1 - exp(- days_per_step / 28)
+    α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
+    α = 1 - α_pre
+
+    # Use bijector to transform to have support (0, 1) rather than ℝ.
+    b = Bijectors.Logit{1, Float64}(0.0, 1.0)
+    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
+
+    return ρₜ
+end
+
+@model function NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond, weekly_case_variation = missing, ϕ = missing)
+    # Noise for cases
+    num_regions = size(X, 1)
+    ϕ ~ filldist(𝒩₊(0, 5), num_regions)
+
+    # Convlution 
+    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+
+    # Weekly variation
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
+    num_days = size(expected_positive_tests, 2)
+    weekly_case_variation = transpose(
+        repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
+    )
+    expected_positive_tests_weekly_adj = 7 * expected_positive_tests .* weekly_case_variation
+
+    # Observe
+    C ~ arraydist(NegativeBinomial3.(expected_positive_tests_weekly_adj, ϕ))
+
+    return C
+end
+
+@model function RegionalFlux(
+    F_id, F_in, F_out,
+    W, R, X_cond,
+    days_per_step = 1,
+    β = missing,
+    ρₜ = missing,
+    ψ = missing,
+    ξ = missing,
+    σ_ξ = missing
+)
+    num_steps = size(R, 2)
+    num_cond = size(X_cond, 2)
+    num_regions = size(F_in, 1)
+    
+    # Noise for latent infections.
+    ψ ~ 𝒩₊(0, 5)
+
+    # Global infection.
+    σ_ξ ~ 𝒩₊(0, 5)
+    ξ ~ 𝒩₊(0, σ_ξ)
+
+    # AR(1) prior
+    ρₜ = @submodel LogisticAR1(num_steps, days_per_step)
+
+    β ~ Uniform(0, 1)
+
+    # Compute the flux matrix
+    F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
+
+    # Daily latent infections.
+    num_infer = size(F, 3)
+    @assert num_infer % days_per_step == 0
+
+    X ~ filldist(Flat(), num_regions * num_infer)
+    X = reshape(X, num_regions, num_infer)
+    X_full = hcat(X_cond, X)
+
+    # Compute the logdensity
+    Turing.@addlogprob! logjoint_X(F, X_full, W, R, ξ, ψ, num_cond, days_per_step)
+
+    return X_full
+end
+
+@model function rmap(
+    C, D, W,
+    F_id, F_out, F_in,
+    K_time, K_spatial, K_local,
+    days_per_step = 1,
+    X_cond = nothing,
+    ρ_spatial = missing, ρ_time = missing,
+    σ_spatial = missing, σ_local = missing,
+    σ_ξ = missing
+) where {TV}
+    num_cond = size(X_cond, 2)
+
+    # GP-model for R-value.
+    R = @submodel SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
+
+    # Latent infections.
+    X = @submodel RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step)
+
+    # Likelihood.
+    @submodel NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond)
+
+    return (X = X[:, num_cond + 1:end], R = R)
+end
+
+function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
+    ρₜ = repeat(ρₜ, inner=days_per_step)
+
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
     oneminusρₜ = @. 1 - ρₜ
@@ -246,7 +388,8 @@ function compute_flux(F_id, F_in, F_out, β, ρₜ)
     return F
 end
 
-function logjoint_X(F, X_full, W, R, ξ, ψ, num_cond)
+function logjoint_X(F, X_full, W, R, ξ, ψ, num_cond, days_per_step = 1)
+    R = repeat(R, inner=(1, days_per_step))
     return logjoint_X_halfnorm(F, X_full, W, R, ξ, ψ, num_cond)
 end
 

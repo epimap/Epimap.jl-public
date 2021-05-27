@@ -28,6 +28,8 @@ using Tullio
 
 using TuringUtils, ComponentArrays
 
+import Turing.DynamicPPL: @submodel
+
 include("models.jl")
 include("data.jl")
 
