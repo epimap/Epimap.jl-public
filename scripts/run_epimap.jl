@@ -4,10 +4,31 @@ using DataFrames
 using Dates
 using Adapt
 
+using Serialization, DrWatson, Dates
+
+macro cleanbreak(ex)
+    quote
+        try
+            $(esc(ex))
+        catch e
+            if e isa InterruptException
+                @warn "Computation interrupted"
+            else
+                rethrow()
+            end
+        end
+    end
+end
+
+const _intermediatedir = projectdir("intermediate", "$(Dates.now())")
+intermediatedir() = _intermediatedir
+intermediatedir(args...) = joinpath(intermediatedir(), args...)
+mkpath(intermediatedir())
+
 # Load data
 const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "epimap-data", "processed_data")
-data = Rmap.load_data(DATADIR);
-T = Float64
+data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
+T = Float32
 
 # Construct the model arguments from data
 setup_args = Rmap.setup_args(
@@ -59,7 +80,7 @@ initial_ϵ = find_good_stepsize(hamiltonian, ϕ_init)
 # Construct integrator and trajectory.
 integrator = Leapfrog(initial_ϵ)
 
-τ = Trajectory{MultinomialTS}(integrator, AdvancedHMC.FixedNSteps(10))
+τ = Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn(8, 1000.0))
 κ = HMCKernel(τ)
 adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(T(0.8), integrator))
 
@@ -72,10 +93,10 @@ model = AdvancedHMC.DifferentiableDensityModel(hamiltonian.ℓπ, hamiltonian.�
 
 # Parameters
 nadapts = 1_000;
-nsamples = 3_000;
+nsamples = 1_000;
 
 # Callback to use for progress-tracking.
-cb = AdvancedHMC.HMCProgressCallback(nsamples, progress = true, verbose = false)
+cb = AdvancedHMC.HMCProgressCallback(nadapts + nsamples, progress = true, verbose = false)
 
 # Create the iterator.
 it = AbstractMCMC.steps(
@@ -95,9 +116,8 @@ samples = AbstractMCMC.samples(transition, model, sampler);
 # [OPTIONAL] Keep track of some states for debugging purposes.
 states = [state];
 
-# Sample!
-@info "Sampling!"
-for i = 1:nsamples
+@info "Adapting!"
+@cleanbreak for i = 1:nadapts
     global transition, state
 
     # Step
@@ -114,3 +134,32 @@ for i = 1:nsamples
     # Save sample
     AbstractMCMC.save!!(samples, transition, state.i, model, sampler, nsamples)
 end
+
+# Serialize
+serialize(intermediatedir("state_adaptation.jls"), state)
+serialize(intermediatedir("sampler_adaptation.jls"), sampler)
+serialize(intermediatedir("kwargs_adaptation.jls"), it.kwargs)
+
+# Sample!
+@info "Sampling!"
+@cleanbreak for i = 1:nsamples
+    global transition, state
+
+    # Step
+    transition, state = iterate(it, state)
+    
+    # Run callback
+    cb(rng, model, sampler, transition, state, state.i; it.kwargs...)
+
+    # Save some of the states just for fun
+    if i % 200 == 0
+        push!(states, state)
+    end
+    
+    # Save sample
+    AbstractMCMC.save!!(samples, transition, state.i, model, sampler, nsamples)
+end
+
+serialize(intermediatedir("state_last.jls"), state)
+serialize(intermediatedir("sampler_last.jls"), sampler)
+serialize(intermediatedir("chain.jls"), samples)
