@@ -35,7 +35,7 @@ Loads the Rmap data from the data-processing project and returns a named tuple o
 `rmap_path` can be a local (absolute) path (which should then be prefixed by `"file://"`), or it can be
 a direct link to the data-folder in the repository.
 """
-function load_data(rmap_path = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data"); metric = nothing)
+function load_data(rmap_path = "file://" * get(ENV, "EPIMAP_DATA", joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data")); metric = nothing)
     # Download files if not present
     @RemoteFileSet datasets "Rmap data" begin
         cases = @RemoteFile "$(rmap_path)/cases.csv" dir=datadir("rmap") updates=:daily
