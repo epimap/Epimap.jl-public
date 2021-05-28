@@ -294,11 +294,11 @@ end
     F_id, F_in, F_out,
     W, R, X_cond,
     days_per_step = 1,
+    σ_ξ = missing,
+    ξ = missing,
     β = missing,
     ρₜ = missing,
     ψ = missing,
-    ξ = missing,
-    σ_ξ = missing
 )
     num_steps = size(R, 2)
     num_cond = size(X_cond, 2)
@@ -349,7 +349,7 @@ end
     R = @submodel SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     # Latent infections.
-    X = @submodel RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step)
+    X = @submodel RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
 
     # Likelihood.
     @submodel NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond)
