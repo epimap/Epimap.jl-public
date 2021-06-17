@@ -52,6 +52,7 @@ serialize(intermediatedir("args.jls"), args)
 # Instantiate model
 m = Rmap.rmap_naive(args...);
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(Rmap.rmap_naive, args..., Matrix{T});
+const b⁻¹ = inv(b)
 
 # Give it a try
 logπ(θ_init)
@@ -112,7 +113,7 @@ transition, state = iterate(it);
 @info "Initial sample" transition.stat
 
 # Create the sample container.
-samples = AbstractMCMC.samples(transition, model, sampler);
+samples = AbstractMCMC.samples(SimpleTransition(b⁻¹(transition.z.θ), transition.stat), model, sampler);
 
 # [OPTIONAL] Keep track of some states for debugging purposes.
 states = [state];
@@ -133,7 +134,9 @@ states = [state];
     end
     
     # Save sample
-    AbstractMCMC.save!!(samples, transition, state.i, model, sampler, nsamples)
+    # Transform `transition` back to original space.
+    t = SimpleTransition(b⁻¹(transition.z.θ), transition.z.ℓπ.value, transition.stat)
+    AbstractMCMC.save!!(samples, t, state.i, model, sampler, nsamples)
 end
 
 # Serialize
@@ -158,7 +161,8 @@ serialize(intermediatedir("kwargs_adaptation.jls"), it.kwargs)
     end
     
     # Save sample
-    AbstractMCMC.save!!(samples, transition, state.i, model, sampler, nsamples)
+    t = SimpleTransition(b⁻¹(transition.z.θ), transition.z.ℓπ.value, transition.stat)
+    AbstractMCMC.save!!(samples, t, state.i, model, sampler, nsamples)
 end
 
 serialize(intermediatedir("state_last.jls"), state)
