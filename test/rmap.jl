@@ -125,12 +125,6 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
             # `make_logjoint`
             logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m)
 
-            # Verify that they have received the same arguments
-            # Remove the type-parameters from the model
-            for k in filter(k -> !(m.args[k] isa Type), keys(m.args))
-                @test m.args[k] == getfield(logπ, k)
-            end
-
             # Check average difference
             spl = DynamicPPL.SampleFromPrior()
 
