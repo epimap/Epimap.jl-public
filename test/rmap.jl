@@ -123,11 +123,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
             m = Rmap.rmap_naive(args...);
 
             # `make_logjoint`
-            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(
-                Rmap.rmap_naive,
-                args...,
-                Matrix{T}
-            )
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m)
 
             # Verify that they have received the same arguments
             # Remove the type-parameters from the model
@@ -189,11 +185,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
             args = make_default_args(data, T)
 
             # `make_logjoint`
-            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(
-                Rmap.rmap_naive,
-                args...,
-                Matrix{T}
-            )
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(Rmap.rmap_naive(args...))
 
             @unpack F_id, F_in, F_out = args
             @unpack β, ρₜ = θ_init
