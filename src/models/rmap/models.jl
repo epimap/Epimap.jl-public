@@ -8,10 +8,10 @@ function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
     # K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
     # HACK: use this until we have an adjoint for `ScalMat` constructor in ChainRulesCore.jl
-    K_spatial = PDMat(σ_spatial^2 .* K_spatial_nonscaled)
-    K_local = PDMat(σ_local^2 .* K_local)
+    K_spatial = σ_spatial^2 .* K_spatial_nonscaled
+    K_local = σ_local^2 .* K_local
 
-    K_space = PDMat(K_local + K_spatial) # `PDMat` is a no-op if the input is already a `PDMat`
+    K_space = K_local + K_spatial # `PDMat` is a no-op if the input is already a `PDMat`
     L_space = cholesky(K_space).L
 
     return L_space
@@ -21,7 +21,7 @@ function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local, ρ_spatia
     return spatial_L(K_spatial_nonscaled .^ inv.(ρ_spatial), K_local, σ_spatial, σ_local)
 end
 
-time_U(K_time) = cholesky(PDMat(K_time)).U
+time_U(K_time) = cholesky(K_time).U
 time_U(K_time, ρ_time) = time_U(K_time .^ inv.(ρ_time))
 
 @doc raw"""
