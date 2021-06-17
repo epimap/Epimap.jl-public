@@ -397,6 +397,15 @@ function Epimap.precompute(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_nai
     return precomputed
 end
 
+# To avoid ambiguity errors.
+function DynamicPPL.logjoint(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    vi::DynamicPPL.AbstractVarInfo
+)
+    model(vi, DynamicPPL.DefaultContext())
+    return DynamicPPL.getlogp(vi)
+end
+
 function DynamicPPL.logjoint(
     model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
     args
