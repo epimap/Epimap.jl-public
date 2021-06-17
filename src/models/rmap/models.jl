@@ -554,7 +554,7 @@ end
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
-        F = compute_flux(F_id, F_in, F_out, β, ρₜ)
+        F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
         F_expanded = F
         # Repeat F along time-dimension to get F for every day in constant region.
         # F_expanded = repeat(F, inner=(1, 1, days_per_step))
