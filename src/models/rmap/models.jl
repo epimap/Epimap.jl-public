@@ -436,15 +436,8 @@ end
 
         @unpack num_regions, num_times, num_cond, num_infer, weekly_case_variation_reindex = precomputed
 
-        # num_regions = size(C, 1)
-        # num_times = size(C, 2)
-        # num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
-        # num_infer = num_times - num_cond
-
-        # weekly_case_variation_reindex = adjust_weekly_index(num_cond)
-
         # Ensure that the univariates are treated as 0-dims
-        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ β σ_spatial σ_local
+        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ β σ_spatial σ_local ρ_spatial ρ_time σ_ξ
 
         X = if X isa AbstractVector
             # Need to reshape
