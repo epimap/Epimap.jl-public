@@ -8,10 +8,10 @@ function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
     # K_local = ScalMat(size(K_local, 1), σ_local^2) * K_local
     # HACK: use this until we have an adjoint for `ScalMat` constructor in ChainRulesCore.jl
-    K_spatial = PDMat(σ_spatial^2 .* K_spatial_nonscaled)
-    K_local = PDMat(σ_local^2 .* K_local)
+    K_spatial = σ_spatial^2 .* K_spatial_nonscaled
+    K_local = σ_local^2 .* K_local
 
-    K_space = PDMat(K_local + K_spatial) # `PDMat` is a no-op if the input is already a `PDMat`
+    K_space = K_local + K_spatial # `PDMat` is a no-op if the input is already a `PDMat`
     L_space = cholesky(K_space).L
 
     return L_space
@@ -21,7 +21,7 @@ function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local, ρ_spatia
     return spatial_L(K_spatial_nonscaled .^ inv.(ρ_spatial), K_local, σ_spatial, σ_local)
 end
 
-time_U(K_time) = cholesky(PDMat(K_time)).U
+time_U(K_time) = cholesky(K_time).U
 time_U(K_time, ρ_time) = time_U(K_time .^ inv.(ρ_time))
 
 @doc raw"""
@@ -129,8 +129,8 @@ Note that those with default value `missing` will be sampled if not specified.
     ρ_time ~ 𝒩₊(0, 5)
 
     # Scales
-    σ_spatial ~ 𝒩₊(0, 5)
-    σ_local ~ 𝒩₊(0, 5)
+    σ_spatial ~ 𝒩₊(0, 0.5)
+    σ_local ~ 𝒩₊(0, 0.5)
 
     # GP prior
     E_vec ~ MvNormal(num_regions * num_steps, 1.0)
@@ -217,7 +217,9 @@ Note that those with default value `missing` will be sampled if not specified.
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
 
-function compute_flux(F_id, F_in, F_out, β, ρₜ)
+function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
+    ρₜ = repeat(ρₜ, inner=days_per_step)
+
     # Compute the full flux
     F_cross = @. β * F_out + (1 - β) * F_in
     oneminusρₜ = @. 1 - ρₜ
@@ -339,39 +341,11 @@ end
     return _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
 end
 
-function Epimap.make_logjoint(
-    ::typeof(rmap_naive),
-    C, D, W,
-    F_id, F_out, F_in,
-    K_time, K_spatial, K_local,
-    days_per_step = 1,
-    X_cond = nothing,
-    ρ_spatial = missing, ρ_time = missing,
-    σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing,
-    ::Type{TV} = Matrix{Float64}
-) where {TV}
-    num_regions = size(C, 1)
-    num_times = size(C, 2)
-    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
-    num_infer = num_times - num_cond
-
-    # Execute the model once to get initial parameters.
-    m = rmap_naive(
-        C, D, W,
-        F_id, F_out, F_in,
-        K_time, K_spatial, K_local,
-        days_per_step,
-        X_cond,
-        ρ_spatial, ρ_time,
-        σ_spatial, σ_local,
-        σ_ξ,
-        TV
-    )
-
-    vi = Turing.VarInfo(m)
+function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+    # Construct an example `VarInfo`.
+    vi = Turing.VarInfo(model)
     # Adapt parameters to use desired `eltype`.
-    adaptor = Epimap.FloatMaybeAdaptor{eltype(TV)}()
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
     θ = adapt(adaptor, ComponentArray(vi))
     # Construct the corresponding bijector.
     b_orig = TuringUtils.optimize_bijector(
@@ -383,15 +357,9 @@ function Epimap.make_logjoint(
     end
     binv = inv(b)
 
-    # Ensures that we'll be using the same ordering as the original model.
-    weekly_case_variation_reindex = map(1:7) do i
-        (i + num_cond) % 7 + 1
-    end
-
     # Converter used for standard arrays.
     axis = first(ComponentArrays.getaxes(θ))
     nt(x) = Epimap.tonamedtuple(x, axis)
-
 
     function logjoint_unconstrained(args_unconstrained::AbstractVector)
         return logjoint_unconstrained(nt(args_unconstrained))
@@ -401,14 +369,84 @@ function Epimap.make_logjoint(
         return logjoint(args) + logjac
     end
 
+    precomputed = Epimap.precompute(model)
     logjoint(args::AbstractVector) = logjoint(nt(args))
     function logjoint(args::Union{NamedTuple, ComponentArray})
-        # TODO: This should unpack model-arguments which are `missing` too!
-        # Should maybe just use the `θ` sampled to do so.
-        @unpack ψ, ϕ, weekly_case_variation, E_vec, β, μ_ar, σ_ar, α_pre, ρₜ, ξ, X = args
+        return DynamicPPL.logjoint(model, precomputed, args)
+    end
+
+    return (logjoint, logjoint_unconstrained, b, θ)
+end
+
+function Epimap.precompute(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+    C = model.args.C
+    X_cond = model.args.X_cond
+
+    num_regions = size(C, 1)
+    num_times = size(C, 2)
+    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
+    num_infer = num_times - num_cond
+
+    # Ensures that we'll be using the same ordering as the original model.
+    weekly_case_variation_reindex = map(1:7) do i
+        (i + num_cond) % 7 + 1
+    end
+
+    precomputed = (; num_regions, num_times, num_cond, num_infer, weekly_case_variation_reindex)
+
+    return precomputed
+end
+
+# To avoid ambiguity errors.
+function DynamicPPL.logjoint(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    vi::DynamicPPL.AbstractVarInfo
+)
+    model(vi, DynamicPPL.DefaultContext())
+    return DynamicPPL.getlogp(vi)
+end
+
+function DynamicPPL.logjoint(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    args
+)
+    return DynamicPPL.logjoint(model, Epimap.precompute(model), args)
+end
+
+function DynamicPPL.logjoint(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    precomputed,
+    args
+)
+    return DynamicPPL.logjoint(model, precomputed, args, Val{keys(args)}())
+end
+
+@generated function DynamicPPL.logjoint(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive), outerkeys},
+    precomputed,
+    args,
+    ::Val{innerkeys}
+) where {innerkeys, outerkeys}
+    outerexpr = Expr(:block)
+    for k in outerkeys
+        if !(k in innerkeys)
+            push!(outerexpr.args, :($k = getproperty(model.args, $(QuoteNode(k)))))
+        end
+    end
+
+    innerexpr = Expr(:block)
+    for k in innerkeys
+        push!(innerexpr.args, :($k = getproperty(args, $(QuoteNode(k)))))
+    end
+
+    return quote
+        $outerexpr
+        $innerexpr
+
+        @unpack num_regions, num_times, num_cond, num_infer, weekly_case_variation_reindex = precomputed
 
         # Ensure that the univariates are treated as 0-dims
-        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ β
+        Epimap.@map! first ψ μ_ar σ_ar α_pre ξ β σ_spatial σ_local ρ_spatial ρ_time σ_ξ
 
         X = if X isa AbstractVector
             # Need to reshape
@@ -421,7 +459,6 @@ function Epimap.make_logjoint(
 
         μ₀ = zero(T)
         σ₀ = T(5)
-
 
         # tack the conditioning X's back on to the samples
         X = X_cond === nothing ? X : hcat(X_cond, X)
@@ -449,10 +486,10 @@ function Epimap.make_logjoint(
         lp += sum(halfnormlogpdf.(μ₀, σ₀, ρ_time))
 
         # Scales
-        # σ_spatial ~ 𝒩₊(0, 5)
-        lp += sum(halfnormlogpdf.(μ₀, σ₀, σ_spatial))
-        # σ_local ~ 𝒩₊(0, 5)
-        lp += sum(halfnormlogpdf.(μ₀, σ₀, σ_local))
+        # σ_spatial ~ 𝒩₊(0, 0.5)
+        lp += sum(halfnormlogpdf.(μ₀, T(0.5), σ_spatial))
+        # σ_local ~ 𝒩₊(0, 0.5)
+        lp += sum(halfnormlogpdf.(μ₀, T(0.5), σ_local))
 
         # GP prior
         # E_vec ~ MvNormal(num_regions * num_times, 1.0)
@@ -493,7 +530,6 @@ function Epimap.make_logjoint(
         b_ρₜ = Bijectors.Logit{1}(zero(T), one(T))
         # ρₜ ~ transformed(AR1(num_times, α, μ_ar, σ_ar), inv(b_ρₜ))
         lp += logpdf(transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b_ρₜ)), ρₜ)
-        ρₜ = repeat(ρₜ, inner=days_per_step)
 
         # Global infection
         # σ_ξ ~ 𝒩₊(0, 5)
@@ -520,12 +556,11 @@ function Epimap.make_logjoint(
         # end
         # NOTE: This is the part which is the slowest.
         # Adds almost a second to the gradient computation for certain "standard" setups.
-        F = compute_flux(F_id, F_in, F_out, β, ρₜ)
+        F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
         F_expanded = F
         # Repeat F along time-dimension to get F for every day in constant region.
         # F_expanded = repeat(F, inner=(1, 1, days_per_step))
         lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond)
-
         # for t = num_impute:num_times
         #     # Observe
         #     ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
@@ -543,6 +578,4 @@ function Epimap.make_logjoint(
 
         return lp
     end
-
-    return (logjoint, logjoint_unconstrained, b, θ)
 end
