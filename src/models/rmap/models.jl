@@ -129,8 +129,8 @@ Note that those with default value `missing` will be sampled if not specified.
     ρ_time ~ 𝒩₊(0, 5)
 
     # Scales
-    σ_spatial ~ 𝒩₊(0, 5)
-    σ_local ~ 𝒩₊(0, 5)
+    σ_spatial ~ 𝒩₊(0, 0.5)
+    σ_local ~ 𝒩₊(0, 0.5)
 
     # GP prior
     E_vec ~ MvNormal(num_regions * num_steps, 1.0)
