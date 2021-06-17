@@ -345,7 +345,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_
     # Construct an example `VarInfo`.
     vi = Turing.VarInfo(model)
     # Adapt parameters to use desired `eltype`.
-    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.TV)}()
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
     θ = adapt(adaptor, ComponentArray(vi))
     # Construct the corresponding bijector.
     b_orig = TuringUtils.optimize_bijector(
