@@ -58,6 +58,64 @@ function DynamicPPL._getvalue(nt::ComponentArrays.ComponentArray, sym::Val, inds
     return DynamicPPL._getindex(value, inds)
 end
 
+# Turing.jl-related
+# Makes it so we can use the samples from AHMC as we would a chain obtained from Turing.jl.
+struct SimpleTransition{T, L, S}
+    θ::T
+    logp::L
+    stat::S
+end
+
+function Turing.Inference.metadata(t::SimpleTransition)
+    lp = t.z.ℓπ.value
+    return merge(t.stat, (lp = lp, ))
+end
+
+DynamicPPL.getlogp(t::SimpleTransition) = t.z.ℓπ.value
+
+function AbstractMCMC.bundle_samples(
+    ts::Vector{<:SimpleTransition},
+    var_info::DynamicPPL.VarInfo,
+    chain_type::Type{MCMCChains.Chains};
+    save_state = false,
+    kwargs...
+)
+    # Convert transitions to array format.
+    # Also retrieve the variable names.
+    @info "Getting the param names"
+    nms, _ = Turing.Inference._params_to_array([var_info]);
+
+    # Get the values of the extra parameters in each transition.
+    @info "Transition extras"
+    extra_params, extra_values = Turing.Inference.get_transition_extras(ts)
+
+    # We make our own `vals`
+    @info "Getting the values"
+    vals = map(ts) do t
+        Matrix(ComponentArrays.getdata(t.z.θ)')
+    end;
+    vals = vcat(vals...)
+
+    # Extract names & construct param array.
+    nms = [nms; extra_params]
+    parray = hcat(vals, extra_values)
+
+    info = NamedTuple()
+
+    # Conretize the array before giving it to MCMCChains.
+    @info "Converting to Array{Float64}"
+    parray = convert(Array{Float64}, parray)
+
+    # Chain construction.
+    @info "Constructing `Chains`"
+    return MCMCChains.Chains(
+        parray,
+        nms,
+        (internals = extra_params,);
+        info=info,
+    )
+end
+
 #############
 ### Rules ###
 #############
