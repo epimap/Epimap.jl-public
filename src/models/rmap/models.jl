@@ -113,106 +113,14 @@ Note that those with default value `missing` will be sampled if not specified.
     @assert num_infer % days_per_step == 0
     num_steps = num_infer ÷ days_per_step
 
-    prev_infect_cutoff = length(W)
-    test_delay_cutoff = length(D)
-
-    # Noise for cases
-    ψ ~ 𝒩₊(0, 5)
-    ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-
-    # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
-
     ### GP prior ###
-    # Length scales
-    ρ_spatial ~ 𝒩₊(0, 5)
-    ρ_time ~ 𝒩₊(0, 5)
-
-    # Scales
-    σ_spatial ~ 𝒩₊(0, 0.5)
-    σ_local ~ 𝒩₊(0, 0.5)
-
-    # GP prior
-    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
-    E = reshape(E_vec, (num_regions, num_steps))
-
-    # Get cholesky decomps using precomputed kernel matrices
-    L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
-    U_time = time_U(K_time, ρ_time)
-
-    # Obtain the sample
-    f = L_space * E * U_time
-    R = exp.(f)
+    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     ### Flux ###
-    # Flux parameters
-    β ~ Uniform(0, 1)
-
-    # AR(1) prior
-    # set mean of process to be 0.1, 1 std = 0.024-0.33
-    μ_ar ~ Normal(-2.19, 0.25)
-    σ_ar ~ 𝒩₊(0.0, 0.25)
-
-    # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
-    # wrt. number of days used in each time-step (specified by `days_per_step`).
-    σ_α = 1 - exp(- days_per_step / 28)
-    α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-    α = 1 - α_pre
-
-    # Use bijector to transform to have support (0, 1) rather than ℝ.
-    b = Bijectors.Logit{1, Float64}(0.0, 1.0)
-    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
-
-    # Global infection
-    σ_ξ ~ 𝒩₊(0, 5)
-    ξ ~ 𝒩₊(0, σ_ξ)
-
-    # TODO: move the computation of `Z̃ₜ` into a function, so we can define a custom adjoint for it,
-    # to allow Zygote.jl/reverse-mode AD compatibility.
-    X = TV(undef, (num_regions, num_times))
-
-    if X_cond !== nothing
-        X[:, 1:num_cond] = X_cond
-    end
-
-    for t = (num_cond + 1):num_times
-        # compute the index of the step this day is in
-        t_step = (t - num_cond - 1) ÷ days_per_step + 1
-
-        # Flux matrix
-        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
-
-        # Eq. (4)
-        # offset t's to account for the extra conditioning days of Xt
-        ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
-        Z̃ₜ = Fₜ * Zₜ # Eq. (5)
-
-        # Use continuous approximation if the element type of `X` is non-integer.
-        μ = R[:, t_step] .* Z̃ₜ .+ ξ
-        if eltype(X) <: Integer
-           for i = 1:num_regions
-                X[i, t] ~ NegativeBinomial3(μ[i], ψ)
-            end
-        else
-            # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
-            for i = 1:num_regions
-                X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
-            end
-        end
-    end
+    @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
-    for t = (num_cond + 1):num_times
-        ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
-        expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-        expected_positive_tests_weekly_adj = (
-            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
-        )
-        for i = 1:num_regions
-            C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
-        end
-    end
+    @submodel C = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
 
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
 end
@@ -232,8 +140,8 @@ end
     ρ_time ~ 𝒩₊(0, 5)
 
     # Scales
-    σ_spatial ~ 𝒩₊(0, 5)
-    σ_local ~ 𝒩₊(0, 5)
+    σ_spatial ~ 𝒩₊(0, 0.5)
+    σ_local ~ 𝒩₊(0, 0.5)
 
     # GP
     E_vec ~ MvNormal(num_regions * num_steps, 1.0)
@@ -268,16 +176,53 @@ end
     return ρₜ
 end
 
+@model function NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond, weekly_case_variation = missing, ϕ = missing)
+    num_times = size(C, 2)
+    num_regions = size(C, 1)
+    test_delay_cutoff = length(D)
+
+    # Noise for cases
+    ϕ ~ filldist(𝒩₊(0, 5), num_regions)
+
+    # Weekly variation
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
+
+    for t = (num_cond + 1):num_times
+        ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
+        expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
+
+        expected_positive_tests_weekly_adj = (
+            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
+        )
+
+        for i = 1:num_regions
+            C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
+        end
+    end
+
+    return C
+end
+
 @model function NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond, weekly_case_variation = missing, ϕ = missing)
     # Noise for cases
     num_regions = size(X, 1)
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
 
-    # Convlution 
-    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
-
     # Weekly variation
     weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
+
+    # TODO: Should we remove this? We only do this to ensure that the results are
+    # identical to `rmap_naive`.
+    # Ensures that we'll be using the same ordering as the original model.
+    weekly_case_variation_reindex = map(1:7) do i
+        (i + num_cond) % 7 + 1
+    end
+    weekly_case_variation = weekly_case_variation[weekly_case_variation_reindex]
+
+    # Convolution
+    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+
+    # Repeat one too many times and then extract the desired section `1:num_regions`
     num_days = size(expected_positive_tests, 2)
     weekly_case_variation = transpose(
         repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
@@ -285,9 +230,100 @@ end
     expected_positive_tests_weekly_adj = 7 * expected_positive_tests .* weekly_case_variation
 
     # Observe
-    C ~ arraydist(NegativeBinomial3.(expected_positive_tests_weekly_adj, ϕ))
+    # TODO: This should be done in a better way.
+    if ismissing(C)
+        C ~ arraydist(NegativeBinomial3.(expected_positive_tests_weekly_adj, ϕ))
+    else
+        # We extract only the time-steps after the imputation-step
+        T = eltype(expected_positive_tests_weekly_adj)
+        Turing.@addlogprob! sum(nbinomlogpdf3.(
+            expected_positive_tests_weekly_adj,
+            ϕ,
+            T.(C) # conversion ensures precision is preserved
+        ))
+    end
 
     return C
+end
+
+@model function RegionalFluxPrior(
+    num_steps,
+    days_per_step = 1,
+    σ_ξ = missing,
+    ξ = missing,
+    β = missing,
+    ρₜ = missing,
+    ψ = missing,
+)
+    # Noise for latent infections.
+    ψ ~ 𝒩₊(0, 5)
+
+    # Global infection.
+    σ_ξ ~ 𝒩₊(0, 5)
+    ξ ~ 𝒩₊(0, σ_ξ)
+
+    # AR(1) prior
+    @submodel ρₜ = LogisticAR1(num_steps, days_per_step)
+
+    β ~ Uniform(0, 1)
+
+    return (; ψ, σ_ξ, ξ, ρₜ, β)
+end
+
+@model function RegionalFluxNaive(
+    F_id, F_in, F_out,
+    W, R, X_cond,
+    days_per_step = 1,
+    σ_ξ = missing,
+    ξ = missing,
+    β = missing,
+    ρₜ = missing,
+    ψ = missing,
+    ::Type{TV} = Matrix{Float64}
+) where {TV}
+    num_steps = size(R, 2)
+    num_cond = size(X_cond, 2)
+    num_regions = size(F_in, 1)
+    num_times = num_steps * days_per_step + num_cond
+
+    prev_infect_cutoff = length(W)
+
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
+
+    X = TV(undef, (num_regions, num_times))
+
+    if X_cond !== nothing
+        X[:, 1:num_cond] = X_cond
+    end
+
+    for t = (num_cond + 1):num_times
+        # compute the index of the step this day is in
+        t_step = (t - num_cond - 1) ÷ days_per_step + 1
+
+        # Flux matrix
+        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+
+        # Eq. (4)
+        # offset t's to account for the extra conditioning days of Xt
+        ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
+        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
+        Z̃ₜ = Fₜ * Zₜ # Eq. (5)
+
+        # Use continuous approximation if the element type of `X` is non-integer.
+        μ = R[:, t_step] .* Z̃ₜ .+ ξ
+        if eltype(X) <: Integer
+           for i = 1:num_regions
+                X[i, t] ~ NegativeBinomial3(μ[i], ψ)
+            end
+        else
+            # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
+            for i = 1:num_regions
+                X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
+            end
+        end
+    end
+
+    return X
 end
 
 @model function RegionalFlux(
@@ -303,18 +339,8 @@ end
     num_steps = size(R, 2)
     num_cond = size(X_cond, 2)
     num_regions = size(F_in, 1)
-    
-    # Noise for latent infections.
-    ψ ~ 𝒩₊(0, 5)
 
-    # Global infection.
-    σ_ξ ~ 𝒩₊(0, 5)
-    ξ ~ 𝒩₊(0, σ_ξ)
-
-    # AR(1) prior
-    ρₜ = @submodel LogisticAR1(num_steps, days_per_step)
-
-    β ~ Uniform(0, 1)
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
 
     # Compute the flux matrix
     F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
@@ -323,8 +349,7 @@ end
     num_infer = size(F, 3)
     @assert num_infer % days_per_step == 0
 
-    X ~ filldist(Flat(), num_regions * num_infer)
-    X = reshape(X, num_regions, num_infer)
+    X ~ filldist(Flat(), num_regions, num_infer)
     X_full = hcat(X_cond, X)
 
     # Compute the logdensity
@@ -342,19 +367,19 @@ end
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing
-) where {TV}
+)
     num_cond = size(X_cond, 2)
 
     # GP-model for R-value.
-    R = @submodel SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
+    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     # Latent infections.
-    X = @submodel RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
+    @submodel X = RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
 
     # Likelihood.
-    @submodel NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond)
+    @submodel C = NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond)
 
-    return (X = X[:, num_cond + 1:end], R = R)
+    return (R = R, X = X[:, num_cond + 1:end])
 end
 
 function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
@@ -389,8 +414,8 @@ function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
 end
 
 function logjoint_X(F, X_full, W, R, ξ, ψ, num_cond, days_per_step = 1)
-    R = repeat(R, inner=(1, days_per_step))
-    return logjoint_X_halfnorm(F, X_full, W, R, ξ, ψ, num_cond)
+    R_expanded = repeat(R, inner=(1, days_per_step))
+    return logjoint_X_halfnorm(F, X_full, W, R_expanded, ξ, ψ, num_cond)
 end
 
 @inline function logjoint_X_halfnorm(F, X_full, W, R, ξ, ψ, num_cond)
@@ -454,7 +479,6 @@ end
 
 @inline function _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
     num_regions = size(C, 1)
-    num_infer = size(X, 2) - num_cond
     # Slice off the conditioning days
     # TODO: The convolution we're doing is for the PAST days, not current `t`, while
     # `conv` implements a convolution which involves the current day.
@@ -465,7 +489,7 @@ end
     # Repeat one too many times and then extract the desired section `1:num_regions`
     num_days = size(expected_positive_tests, 2)
     weekly_case_variation = transpose(
-        repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
+        repeat(weekly_case_variation, (num_days ÷ 7) + 1)[1:num_days]
     )
     expected_positive_tests_weekly_adj = 7 * expected_positive_tests .* weekly_case_variation
 
@@ -644,7 +668,7 @@ end
         # Obtain the sample
         f = L_space * E * U_time
         # Repeat Rt to get Rt for every day in constant region
-        R = repeat(exp.(f), inner=(1, days_per_step))
+        R = exp.(f)
 
         ### Flux ###
         # Flux parameters
@@ -701,7 +725,7 @@ end
         F_expanded = F
         # Repeat F along time-dimension to get F for every day in constant region.
         # F_expanded = repeat(F, inner=(1, 1, days_per_step))
-        lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond)
+        lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond, days_per_step)
         # for t = num_impute:num_times
         #     # Observe
         #     ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
