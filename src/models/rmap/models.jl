@@ -506,6 +506,58 @@ end
     return _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
 end
 
+function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)})
+    # Construct an example `VarInfo`.
+    vi = VarInfo(model)
+    svi = SimpleVarInfo(vi)
+    # Adapt parameters to use desired `eltype`.
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
+    θ = adapt(adaptor, ComponentArray(svi.θ))
+    # Construct the corresponding bijector.
+    b_orig = TuringUtils.optimize_bijector(
+        Bijectors.bijector(vi; tuplify = true)
+    )
+    # Adapt bijector parameters to use desired `eltype`.
+    b = fmap(b_orig) do x
+        adapt(adaptor, x)
+    end
+
+    # Some are `Stacked` but with a univariate bijector, which causes issues.
+    new_bs = map(b.bs) do b
+        if b isa Bijectors.Stacked && length(b.bs) == 1 && length(b.ranges[1]) == 1
+            b.bs[1]
+        else
+            b
+        end
+    end
+
+    # Unfortunately we have to fix the `X` component, which is a `Flat`, by hand.
+    b = Bijectors.NamedBijector(merge(new_bs, (X = Bijectors.Log{2}(), )))
+
+    # And invert.
+    binv = inv(b)
+
+    # Converter used for standard arrays.
+    axis = first(ComponentArrays.getaxes(θ))
+    nt(x) = Epimap.tonamedtuple(x, axis)
+
+    function logjoint_unconstrained(args_unconstrained::AbstractVector)
+        return logjoint_unconstrained(nt(args_unconstrained))
+    end
+    function logjoint_unconstrained(args_unconstrained::Union{NamedTuple, ComponentArray})
+        args, logjac = forward(binv, args_unconstrained)
+        return logjoint(args) + logjac
+    end
+
+    precomputed = Epimap.precompute(model)
+    logjoint(args::AbstractVector) = logjoint(nt(args))
+    function logjoint(args::Union{NamedTuple, ComponentArray})
+        return DynamicPPL.logjoint(model, SimpleVarInfo(args))
+    end
+
+    return (logjoint, logjoint_unconstrained, b, θ)
+end
+
 function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
     # Construct an example `VarInfo`.
     vi = Turing.VarInfo(model)

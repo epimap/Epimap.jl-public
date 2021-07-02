@@ -52,6 +52,12 @@ function DynamicPPL.logjoint(model::DynamicPPL.Model)
     return logjoint
 end
 
+function DynamicPPL._getvalue(nt::ComponentArrays.ComponentArray, sym::Val, inds=())
+    # Use `getproperty` instead of `getfield`
+    value = getproperty(nt, sym)
+    return DynamicPPL._getindex(value, inds)
+end
+
 #############
 ### Rules ###
 #############

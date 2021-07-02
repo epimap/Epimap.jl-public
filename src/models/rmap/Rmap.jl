@@ -18,6 +18,7 @@ import Zygote: FillArrays
 
 using LinearAlgebra
 using Turing
+using DynamicPPL
 using Distributions
 using KernelFunctions
 using PDMats
