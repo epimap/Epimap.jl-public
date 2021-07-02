@@ -67,11 +67,11 @@ struct SimpleTransition{T, L, S}
 end
 
 function Turing.Inference.metadata(t::SimpleTransition)
-    lp = t.z.ℓπ.value
+    lp = DynamicPPL.getlogp(t)
     return merge(t.stat, (lp = lp, ))
 end
 
-DynamicPPL.getlogp(t::SimpleTransition) = t.z.ℓπ.value
+DynamicPPL.getlogp(t::SimpleTransition) = t.logp
 
 function AbstractMCMC.bundle_samples(
     ts::Vector{<:SimpleTransition},
@@ -92,7 +92,7 @@ function AbstractMCMC.bundle_samples(
     # We make our own `vals`
     @info "Getting the values"
     vals = map(ts) do t
-        Matrix(ComponentArrays.getdata(t.z.θ)')
+        Matrix(ComponentArrays.getdata(t.θ)')
     end;
     vals = vcat(vals...)
 

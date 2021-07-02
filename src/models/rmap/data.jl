@@ -209,7 +209,8 @@ function setup_args(
     num_end_days_ignore = 0, 
     timestep = Week(1),
     num_condition_days = 30,
-    condition_observations = false
+    condition_observations = false,
+    include_dates = false
 ) where {T}
     days_per_step = Dates.days(timestep)
     
@@ -303,10 +304,15 @@ function setup_args(
         K_spatial = K_spatial,
         K_local = K_local,
         days_per_step = days_per_step,
-        X_cond = X_cond
+        X_cond = clamp.(X_cond, eps(T), Inf)
     )
 
-    return adapt(Epimap.FloatMaybeAdaptor{T}(), result)
+    result_adapted = adapt(Epimap.FloatMaybeAdaptor{T}(), result)
+    return if include_dates
+        result_adapted, (condition = dates_condition, model = dates_model)
+    else
+        result_adapted
+    end
 end
 
 # TODO: Move out of `Rmap` module since it can be useful for other parts.
