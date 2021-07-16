@@ -400,129 +400,6 @@ end
     return (R = R, X = X[:, num_cond + 1:end])
 end
 
-@model function rmap_naive_old(
-    C, D, W,
-    F_id, F_out, F_in,
-    K_time, K_spatial, K_local,
-    days_per_step = 1,
-    X_cond = nothing,
-    ρ_spatial = missing, ρ_time = missing,
-    σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing,
-    ::Type{TV} = Matrix{Float64}
-) where {TV}
-    num_regions = size(C, 1)
-    num_times = size(C, 2)
-    num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
-    num_infer = num_times - num_cond
-
-    @assert num_infer % days_per_step == 0
-    num_steps = num_infer ÷ days_per_step
-
-    prev_infect_cutoff = length(W)
-    test_delay_cutoff = length(D)
-
-    # Noise for cases
-    ψ ~ 𝒩₊(0, 5)
-    ϕ ~ filldist(𝒩₊(0, 5), num_regions)
-
-    # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
-
-    ### GP prior ###
-    # Length scales
-    ρ_spatial ~ 𝒩₊(0, 5)
-    ρ_time ~ 𝒩₊(0, 5)
-
-    # Scales
-    σ_spatial ~ 𝒩₊(0, 0.5)
-    σ_local ~ 𝒩₊(0, 0.5)
-
-    # GP prior
-    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
-    E = reshape(E_vec, (num_regions, num_steps))
-
-    # Get cholesky decomps using precomputed kernel matrices
-    L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
-    U_time = time_U(K_time, ρ_time)
-
-    # Obtain the sample
-    f = L_space * E * U_time
-    R = exp.(f)
-
-    ### Flux ###
-    # Flux parameters
-    β ~ Uniform(0, 1)
-
-    # AR(1) prior
-    # set mean of process to be 0.1, 1 std = 0.024-0.33
-    μ_ar ~ Normal(-2.19, 0.25)
-    σ_ar ~ 𝒩₊(0.0, 0.25)
-
-    # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
-    # wrt. number of days used in each time-step (specified by `days_per_step`).
-    σ_α = 1 - exp(- days_per_step / 28)
-    α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
-    α = 1 - α_pre
-
-    # Use bijector to transform to have support (0, 1) rather than ℝ.
-    b = Bijectors.Logit{1, Float64}(0.0, 1.0)
-    ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
-
-    # Global infection
-    σ_ξ ~ 𝒩₊(0, 5)
-    ξ ~ 𝒩₊(0, σ_ξ)
-
-    # TODO: move the computation of `Z̃ₜ` into a function, so we can define a custom adjoint for it,
-    # to allow Zygote.jl/reverse-mode AD compatibility.
-    X = TV(undef, (num_regions, num_times))
-
-    if X_cond !== nothing
-        X[:, 1:num_cond] = X_cond
-    end
-
-    for t = (num_cond + 1):num_times
-        # compute the index of the step this day is in
-        t_step = (t - num_cond - 1) ÷ days_per_step + 1
-
-        # Flux matrix
-        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
-
-        # Eq. (4)
-        # offset t's to account for the extra conditioning days of Xt
-        ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
-        Z̃ₜ = Fₜ * Zₜ # Eq. (5)
-
-        # Use continuous approximation if the element type of `X` is non-integer.
-        μ = R[:, t_step] .* Z̃ₜ .+ ξ
-        if eltype(X) <: Integer 
-           for i = 1:num_regions
-                X[i, t] ~ NegativeBinomial3(μ[i], ψ)
-            end
-        else
-            # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
-            for i = 1:num_regions
-                X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
-            end
-        end
-    end
-
-    # Observe (if we're done imputing)
-    for t = (num_cond + 1):num_times
-        ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
-        expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
-        expected_positive_tests_weekly_adj = (
-            7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
-        )
-        for i = 1:num_regions
-            C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
-        end
-    end
-
-    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
-end
-
 function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
     ρₜ = repeat(ρₜ, inner=days_per_step)
 
@@ -698,6 +575,8 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)
 
     return (logjoint, logjoint_unconstrained, b, θ)
 end
+
+
 
 function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
     # Construct an example `VarInfo`.
