@@ -102,13 +102,11 @@ Note that those with default value `missing` will be sampled if not specified.
     K_time, K_spatial, K_local,
     days_per_step = 1,
     X_cond = nothing,
+    ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing,
-    ::Type{TV} = Matrix{Float64}
-) where {TV}
-    T = eltype(TV)
-
+    σ_ξ = missing
+) where {T}
     num_regions = size(C, 1)
     num_times = size(C, 2)
     num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
@@ -121,7 +119,7 @@ Note that those with default value `missing` will be sampled if not specified.
     @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     ### Flux ###
-    @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
+    @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
     @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
@@ -184,7 +182,12 @@ end
     return ρₜ
 end
 
-@model function NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond, weekly_case_variation = missing, ϕ = missing)
+@model function NegBinomialWeeklyAdjustedTestingNaive(
+    C, X, D,
+    num_cond;
+    weekly_case_variation = missing,
+    ϕ = missing
+)
     num_times = size(C, 2)
     num_regions = size(C, 1)
     test_delay_cutoff = length(D)
@@ -206,7 +209,7 @@ end
         )
 
         for i = 1:num_regions
-            B[i, t] = rand(NegativeBinomial3(expected_positive_tests[i], ϕ[i]))
+            B[i, t] = rand(__rng__, NegativeBinomial3(expected_positive_tests[i], ϕ[i]))
             C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
         end
     end
@@ -287,13 +290,13 @@ end
 @model function RegionalFluxNaive(
     F_id, F_in, F_out,
     W, R, X_cond,
+    ::Type{TV} = Matrix{Float64};
     days_per_step = 1,
     σ_ξ = missing,
     ξ = missing,
     β = missing,
     ρₜ = missing,
-    ψ = missing,
-    ::Type{TV} = Matrix{Float64}
+    ψ = missing
 ) where {TV}
     T = eltype(TV)
 
@@ -381,10 +384,10 @@ end
     K_time, K_spatial, K_local,
     days_per_step = 1,
     X_cond = nothing,
+    ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing,
-    ::Type{T} = Float64
+    σ_ξ = missing
 ) where {T}
     num_cond = size(X_cond, 2)
 
