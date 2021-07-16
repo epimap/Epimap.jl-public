@@ -193,7 +193,7 @@ end
     ϕ ~ filldist(𝒩₊(0, 5), num_regions)
 
     # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(7 * ones(7))
 
     # `B` is the observations _without_ weekly adjustment.
     B = similar(C)
@@ -223,7 +223,7 @@ end
     ϕ ~ filldist(𝒩₊(T(0), T(5)), num_regions)
 
     # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7))
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(7 * ones(T, 7))
 
     # TODO: Should we remove this? We only do this to ensure that the results are
     # identical to `rmap_naive`.
@@ -576,8 +576,6 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)
     return (logjoint, logjoint_unconstrained, b, θ)
 end
 
-
-
 function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
     # Construct an example `VarInfo`.
     vi = Turing.VarInfo(model)
@@ -713,7 +711,7 @@ end
         lp += sum(halfnormlogpdf.(μ₀, σ₀, ϕ))
 
         # Weekly case variation
-        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7)), weekly_case_variation)
+        lp += logpdf(Turing.DistributionsAD.TuringDirichlet(7 * ones(T, 7)), weekly_case_variation)
 
         ### GP prior ###
         # Length scales
