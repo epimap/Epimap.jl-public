@@ -263,7 +263,7 @@ end
         )
 
         for i = 1:num_regions
-            B[i, t] = rand(__rng__, NegativeBinomial3(expected_positive_tests[i], ϕ[i]))
+            B[i, t] = rand(NegativeBinomial3(expected_positive_tests[i], ϕ[i]))
             C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
         end
     end
