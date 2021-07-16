@@ -137,7 +137,7 @@ julia> # Instantiate the model.
     @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
-    @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond, T)
+    @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
 
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
 end
@@ -238,8 +238,7 @@ end
 end
 
 @model function NegBinomialWeeklyAdjustedTestingNaive(
-    C, X, D,
-    num_cond;
+    C, X, D, num_cond;
     weekly_case_variation = missing,
     ϕ = missing
 )
@@ -654,21 +653,14 @@ end
     return _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
 end
 
-function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)})
-    # Construct an example `VarInfo`.
-    vi = VarInfo(model)
-    svi = SimpleVarInfo(vi)
-    # Adapt parameters to use desired `eltype`.
-    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
-    θ = adapt(adaptor, ComponentArray(svi.θ))
+function Bijectors.NamedBijector(
+    model::DynamicPPL.Model{Epimap.evaluatortype(rmap)},
+    vi=VarInfo(model)
+)
     # Construct the corresponding bijector.
-    b_orig = TuringUtils.optimize_bijector(
+    b = TuringUtils.optimize_bijector(
         Bijectors.bijector(vi; tuplify = true)
     )
-    # Adapt bijector parameters to use desired `eltype`.
-    b = fmap(b_orig) do x
-        adapt(adaptor, x)
-    end
 
     # Some are `Stacked` but with a univariate bijector, which causes issues.
     new_bs = map(b.bs) do b
@@ -681,8 +673,24 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)
 
     # Unfortunately we have to fix the `X` component, which is a `Flat`, by hand.
     b = Bijectors.NamedBijector(merge(new_bs, (X = Bijectors.Log{2}(), )))
+    return b
+end
 
-    # And invert.
+function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)})
+    # Construct an example `VarInfo`.
+    vi = VarInfo(model)
+    svi = SimpleVarInfo(vi)
+    # Adapt parameters to use desired `eltype`.
+    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
+    θ = adapt(adaptor, ComponentArray(svi.θ))
+    # Construct the corresponding bijector.
+    b = Bijectors.NamedBijector(model, vi)
+
+    # Adapt bijector parameters to use desired `eltype`.
+    b = fmap(b) do x
+        adapt(adaptor, x)
+    end
+
     binv = inv(b)
 
     # Converter used for standard arrays.
