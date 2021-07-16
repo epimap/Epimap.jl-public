@@ -30,14 +30,16 @@ mkpath(intermediatedir())
 # const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "epimap-data", "processed_data")
 const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data")
 data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
-T = Float32
+const T = Float32
+const model_def = Rmap.rmap_naive
 
 # Construct the model arguments from data
 setup_args, dates = Rmap.setup_args(
-    Rmap.rmap_naive, data, T;
+    model_def, data, T;
     num_steps = 15,
     timestep = Week(1),
-    include_dates = true
+    include_dates = true,
+    last_date = Date(2021, 06, 01)
 )
 
 serialize(intermediatedir("dates.jls"), dates)
@@ -45,17 +47,17 @@ serialize(intermediatedir("dates.jls"), dates)
 # Arguments not related to the data which are to be set up
 default_args = (
     ρ_spatial = 10.0,
-    ρ_time = 0.1,
+    ρ_time = 200.0,
     σ_spatial = missing,
     σ_local = missing,
-    σ_ξ = 1.0
+    σ_ξ = 0.1
 )
 
 args = adapt(Epimap.FloatMaybeAdaptor{T}(), merge(setup_args, default_args))
 serialize(intermediatedir("args.jls"), args)
 
 # Instantiate model
-m = Rmap.rmap_naive(args...);
+m = model_def(args...);
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
 
