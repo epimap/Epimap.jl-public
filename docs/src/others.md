@@ -1,0 +1,5 @@
+## Rest
+
+```@autodocs
+Modules = [Epimap]
+```
