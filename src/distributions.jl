@@ -160,13 +160,6 @@ Base.eltype(::AR1{T1, T2, T3}) where {T1, T2, T3} = promote_type(
 
 Bijectors.bijector(::AR1) = Bijectors.Identity{1}()
 
-function Bijectors.bijector(td::Bijectors.TransformedDistribution)
-    # Map back to original space and then from space of `dist`
-    # to real space.
-    b = bijector(td.dist)
-    return inv(td.transform) ∘ b
-end
-
 function Distributions.rand(rng::Random.AbstractRNG, ar::AR1)    
     # Sample
     ξ = randn(rng, length(ar))
