@@ -124,9 +124,9 @@ Note that those with default value `missing` will be sampled if not specified.
     @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
-    @submodel C = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
+    @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
 
-    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end])
+    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
 end
 
 @model function SpatioTemporalGP(
@@ -195,6 +195,8 @@ end
     # Weekly variation
     weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
 
+    # `B` is the observations _without_ weekly adjustment.
+    B = similar(C)
     for t = (num_cond + 1):num_times
         ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
         expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
@@ -204,11 +206,12 @@ end
         )
 
         for i = 1:num_regions
+            B[i, t] = rand(NegativeBinomial3(expected_positive_tests[i], ϕ[i]))
             C[i, t] ~ NegativeBinomial3(expected_positive_tests_weekly_adj[i], ϕ[i])
         end
     end
 
-    return C
+    return C, B
 end
 
 @model function NegBinomialWeeklyAdjustedTesting(
@@ -793,6 +796,7 @@ end
         # Repeat F along time-dimension to get F for every day in constant region.
         # F_expanded = repeat(F, inner=(1, 1, days_per_step))
         lp += logjoint_X(F_expanded, X, W, R, ξ, ψ, num_cond, days_per_step)
+
         # for t = num_impute:num_times
         #     # Observe
         #     ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
