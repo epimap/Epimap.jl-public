@@ -3,6 +3,8 @@ using Bijectors.Functors
 
 ### Convenience methods ###
 
+# TODO: Currently the trick we do with `^inv(ρ)` means that this is only
+# valid for Matern(1/2) kernel. We should just pass in the distance-matrices instead.
 function spatial_L(K_spatial_nonscaled, K_local, σ_spatial, σ_local)
     # Use `PDMats.ScalMat` to ensure that positive-definiteness is preserved
     # K_spatial = ScalMat(size(K_spatial_nonscaled, 1), σ_spatial^2) * K_spatial_nonscaled
@@ -105,6 +107,8 @@ Note that those with default value `missing` will be sampled if not specified.
     σ_ξ = missing,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
+    T = eltype(TV)
+
     num_regions = size(C, 1)
     num_times = size(C, 2)
     num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
@@ -114,7 +118,7 @@ Note that those with default value `missing` will be sampled if not specified.
     num_steps = num_infer ÷ days_per_step
 
     ### GP prior ###
-    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
+    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     ### Flux ###
     @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
@@ -127,24 +131,25 @@ end
 
 @model function SpatioTemporalGP(
     K_spatial, K_local, K_time,
+    ::Type{T} = Float64;
     σ_spatial = missing,
     σ_local = missing,
     ρ_spatial = missing,
     ρ_time = missing
-)
+) where {T}
     num_steps = size(K_time, 1)
     num_regions = size(K_spatial, 1)
 
     # Length scales
-    ρ_spatial ~ 𝒩₊(0, 5)
-    ρ_time ~ 𝒩₊(0, 5)
+    ρ_spatial ~ 𝒩₊(T(0), T(5))
+    ρ_time ~ 𝒩₊(T(0), T(5))
 
     # Scales
-    σ_spatial ~ 𝒩₊(0, 0.5)
-    σ_local ~ 𝒩₊(0, 0.5)
+    σ_spatial ~ 𝒩₊(T(0), T(0.5))
+    σ_local ~ 𝒩₊(T(0), T(0.5))
 
     # GP
-    E_vec ~ MvNormal(num_regions * num_steps, 1.0)
+    E_vec ~ MvNormal(num_regions * num_steps, one(T))
     E = reshape(E_vec, (num_regions, num_steps))
 
     # Get cholesky decomps using precomputed kernel matrices
@@ -157,20 +162,23 @@ end
     return exp.(f)
 end
 
-@model function LogisticAR1(num_steps, days_per_step = 1, α_pre = missing, μ_ar = missing, σ_ar = missing)
+@model function LogisticAR1(
+    num_steps, ::Type{T} = Float64;
+    days_per_step = 1, α_pre = missing, μ_ar = missing, σ_ar = missing
+) where {T}
     # AR(1) prior
     # set mean of process to be 0.1, 1 std = 0.024-0.33
-    μ_ar ~ Normal(-2.19, 0.25)
-    σ_ar ~ 𝒩₊(0.0, 0.25)
+    μ_ar ~ Normal(T(-2.19), T(0.25))
+    σ_ar ~ 𝒩₊(T(0.0), T(0.25))
 
     # 28 likely refers to the number of days in a month, and so we're scaling the autocorrelation
     # wrt. number of days used in each time-step (specified by `days_per_step`).
-    σ_α = 1 - exp(- days_per_step / 28)
-    α_pre ~ transformed(Normal(0, σ_α), inv(Bijectors.Logit(0.0, 1.0)))
+    σ_α = T(1 - exp(- days_per_step / 28))
+    α_pre ~ transformed(Normal(T(0), σ_α), inv(Bijectors.Logit(T(0), T(1))))
     α = 1 - α_pre
 
     # Use bijector to transform to have support (0, 1) rather than ℝ.
-    b = Bijectors.Logit{1, Float64}(0.0, 1.0)
+    b = Bijectors.Logit{1}(T(0), T(1))
     ρₜ ~ transformed(AR1(num_steps, α, μ_ar, σ_ar), inv(b))
 
     return ρₜ
@@ -203,13 +211,16 @@ end
     return C
 end
 
-@model function NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond, weekly_case_variation = missing, ϕ = missing)
+@model function NegBinomialWeeklyAdjustedTesting(
+    C, X, D, num_cond, ::Type{T} = Float64;
+    weekly_case_variation = missing, ϕ = missing
+) where {T}
     # Noise for cases
     num_regions = size(X, 1)
-    ϕ ~ filldist(𝒩₊(0, 5), num_regions)
+    ϕ ~ filldist(𝒩₊(T(0), T(5)), num_regions)
 
     # Weekly variation
-    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(7))
+    weekly_case_variation ~ Turing.DistributionsAD.TuringDirichlet(5 * ones(T, 7))
 
     # TODO: Should we remove this? We only do this to ensure that the results are
     # identical to `rmap_naive`.
@@ -235,7 +246,6 @@ end
         C ~ arraydist(NegativeBinomial3.(expected_positive_tests_weekly_adj, ϕ))
     else
         # We extract only the time-steps after the imputation-step
-        T = eltype(expected_positive_tests_weekly_adj)
         Turing.@addlogprob! sum(nbinomlogpdf3.(
             expected_positive_tests_weekly_adj,
             ϕ,
@@ -248,24 +258,25 @@ end
 
 @model function RegionalFluxPrior(
     num_steps,
+    ::Type{T} = Float64;
     days_per_step = 1,
     σ_ξ = missing,
     ξ = missing,
     β = missing,
     ρₜ = missing,
     ψ = missing,
-)
+) where {T}
     # Noise for latent infections.
-    ψ ~ 𝒩₊(0, 5)
+    ψ ~ 𝒩₊(T(0), T(5))
 
     # Global infection.
-    σ_ξ ~ 𝒩₊(0, 5)
-    ξ ~ 𝒩₊(0, σ_ξ)
+    σ_ξ ~ 𝒩₊(T(0), T(5))
+    ξ ~ 𝒩₊(T(0), σ_ξ)
 
     # AR(1) prior
-    @submodel ρₜ = LogisticAR1(num_steps, days_per_step)
+    @submodel ρₜ = LogisticAR1(num_steps, T; days_per_step)
 
-    β ~ Uniform(0, 1)
+    β ~ Uniform(T(0), T(1))
 
     return (; ψ, σ_ξ, ξ, ρₜ, β)
 end
@@ -281,6 +292,8 @@ end
     ψ = missing,
     ::Type{TV} = Matrix{Float64}
 ) where {TV}
+    T = eltype(TV)
+
     num_steps = size(R, 2)
     num_cond = size(X_cond, 2)
     num_regions = size(F_in, 1)
@@ -288,7 +301,7 @@ end
 
     prev_infect_cutoff = length(W)
 
-    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
 
     X = TV(undef, (num_regions, num_times))
 
@@ -329,18 +342,19 @@ end
 @model function RegionalFlux(
     F_id, F_in, F_out,
     W, R, X_cond,
+    ::Type{T} = Float64;
     days_per_step = 1,
     σ_ξ = missing,
     ξ = missing,
     β = missing,
     ρₜ = missing,
     ψ = missing,
-)
+) where {T}
     num_steps = size(R, 2)
     num_cond = size(X_cond, 2)
     num_regions = size(F_in, 1)
 
-    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
 
     # Compute the flux matrix
     F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
@@ -366,18 +380,19 @@ end
     X_cond = nothing,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing
-)
+    σ_ξ = missing,
+    ::Type{T} = Float64
+) where {T}
     num_cond = size(X_cond, 2)
 
     # GP-model for R-value.
-    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, σ_spatial, σ_local, ρ_spatial, ρ_time)
+    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     # Latent infections.
-    @submodel X = RegionalFlux(F_id, F_in, F_out, W, R, X_cond, days_per_step, σ_ξ)
+    @submodel X = RegionalFlux(F_id, F_in, F_out, W, R, X_cond, T; days_per_step, σ_ξ)
 
     # Likelihood.
-    @submodel C = NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond)
+    @submodel C = NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond, T)
 
     return (R = R, X = X[:, num_cond + 1:end])
 end
