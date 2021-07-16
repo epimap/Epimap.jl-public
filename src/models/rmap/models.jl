@@ -27,33 +27,48 @@ time_U(K_time) = cholesky(K_time).U
 time_U(K_time, ρ_time) = time_U(K_time .^ inv.(ρ_time))
 
 @doc raw"""
-    rmap_naive(args...)
+    rmap_naive(args...; kwargs...)
 
 Naive implementation of full Rmap model.
 
-## Arguments
+# Arguments
 - `C::AbstractMatrix`: cases in a matrix of size `(num_regions, num_times)`.
 - `D::AbstractVector`: testing delay distribution of length `< num_times`, i.e. `D[t]` is
     the probability that an infected person tests positive after `t` steps.
 - `W::AbstractVector`: generation distribution/infection profile of length `< num_times`, i.e.
     `W[t]` is the probability of a secondary infection after `t` steps.
-- `X_cond::AbstractMatrix`: Precomputed Xt before the start of the modelling period to condition on.
 - `F_id::AbstractMatrix`: diagonal flux matrix representing local infection.
 - `F_out::AbstractMatrix`: flux matrix representing outgoing infections.
 - `F_in::AbstractMatrix`: flux matrix representing incoming infections.
 - `K_time::AbstractPDMat`: (positive-definite) kernel matrix for the time kernel.
 - `K_spatial::AbstractPDMat`: (positive-definite) kernel matrix for the spatial kernel.
 - `K_local::AbstractPDMat`: (positive-definite) kernel matrix for the local spatial kernel.
+- `days_per_step = 1`: specifies how many days of data each time step corresponds to.
+- `X_cond::AbstractMatrix=nothing`: Precomputed Xt before the start of the modelling period to condition on.
+
+# Keyword arguments
 - `ρ_spatial = missing`: length scale / "stretch" applied to `K_spatial`.
 - `ρ_time = missing`: length scale / "stretch" applied to `K_time`.
 - `σ_spatial = missing`: scale applied to `K_spatial`.
 - `σ_local = missing`: scale applied to `K_local`.
 - `σ_ξ = missing`: square root of variance of the "global" infection pressure `ξ`.
-- `days_per_step = 1`: specifies how many days of data each time step corresponds to.
+
 
 Note that those with default value `missing` will be sampled if not specified.
 
-## Mathematical description
+# Examples
+```julia
+julia> # Load data.
+       data = Rmap.load_data();
+
+julia> # Convert `data` into something compatible with `Rmap.rmap_naive`
+       args, dates = Rmap.setup_args(Rmap.rmap_naive, data; num_steps=15, timestep=Week(1), include_dates=true);
+
+julia> # Instantiate the model.
+       m = Rmap.rmap_naive(args...; ρ_spatial=0.1, ρ_time=100);
+```
+
+# Mathematical description
 ```math
 \begin{align*}
   \psi & \sim \mathcal{N}_{ + }(0, 5) \\
@@ -127,6 +142,46 @@ Note that those with default value `missing` will be sampled if not specified.
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
 end
 
+@doc raw"""
+    SpatioTemporalGP(K_spatial, K_local, K_time[, ::Type{T}]; kwargs...)
+
+Model of Rt for each region and time using a spatio-temporal Gaussian process.
+
+# Arguments
+- `K_time::AbstractPDMat`: (positive-definite) kernel matrix for the time kernel.
+- `K_spatial::AbstractPDMat`: (positive-definite) kernel matrix for the spatial kernel.
+- `K_local::AbstractPDMat`: (positive-definite) kernel matrix for the local spatial kernel.
+
+# Keyword arguments
+- `σ_spatial = missing`: scale used for the cross-region spatial component of the GP.
+- `σ_local = missing`: scale used for the local region component of the GP.
+- `ρ_spatial = missing`: length-scale used for the cross-region spatial component of the GP.
+- `ρ_time = missing`: length-scale used for the temporal component of the GP.
+
+# Mathematical description
+```math
+\begin{align*}
+  \underline{\text{Time:}} \\
+  \rho_{\mathrm{time}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{time}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  % \big( K_{\mathrm{time}} \big)_{t, t'} & := \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}(t, t')^{1 / \rho_{\mathrm{time}}} & \quad \forall t, t' = 1, \dots, T \\
+  % L_{\mathrm{time}} & := \mathrm{cholesky}(K_{\mathrm{time}}) \\
+  f_{\mathrm{time}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}^{1 / \rho_{\mathrm{time}}} \Big) \\
+  \underline{\text{Space:}} \\
+  \rho_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  % \big( k_{\mathrm{spatial}} \big)_{i, j} & := \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}(i, j)^{1 / \rho_{\mathrm{spatial}}} & \quad \forall i, j = 1, \dots, n \\
+  % L_{\mathrm{space}} & := \mathrm{cholesky}(k_{\mathrm{spatial}}) \\
+  f_{\mathrm{space}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}^{1 / \rho_{\mathrm{spatial}}} \Big) \\
+  \underline{\text{R-value:}} \\
+  % E_{i, t} & \sim \mathcal{N}(0, 1) & \quad \forall i = 1, \dots, n, \quad t = 1, \dots, T \\
+  % f & := L_{\mathrm{space}} \ E \ L_{\mathrm{time}}^T \\
+  f & := f_{\mathrm{time}}(1, \dots, T) + f_{\mathrm{space}} \big( (x_1, y_1), \dots, (x_n, y_n) \big) \\
+  R & := \exp(f)
+\end{align*}
+```
+"""
 @model function SpatioTemporalGP(
     K_spatial, K_local, K_time,
     ::Type{T} = Float64;
@@ -217,6 +272,33 @@ end
     return C, B
 end
 
+@doc raw"""
+    NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond[, ::Type{T}]; kwargs...)
+
+Model for number of cases using a negative binomial with adjustment for within-week variation.
+
+Return cases `C`, either sampled or observed.
+
+# Arguments
+- `C::AbstractMatrix`: cases in a matrix of size `(num_regions, num_times)`.
+- `X::AbstractMatrix`: latent infections of size `(num_regions, num_times)`, e.g. as
+    returned by [`RegionalFlux`](@ref).
+- `D::AbstractVector`: testing delay distribution of length `< num_times`, i.e. `D[t]` is
+    the probability that an infected person tests positive after `t` steps.
+
+# Keyword arguments
+- `weekly_case_variation = missing`: weekly case variation used.
+- `ϕ = missing`: region-specific variance parameter for the likelihood.
+
+# Mathematical model
+```math
+\begin{align*}
+  \phi_i & \sim \mathcal{N}_{ + }(0, 5) & \quad \forall i = 1, \dots, n \\
+  w & \sim \mathrm{Dirichlet}(7, 7) \\
+  C_{i, t} & \sim \mathrm{NegativeBinomial3}\bigg( w_{t \mod 7}\sum_{\tau = 1}^{t} I(\tau < T_{\mathrm{test}}) X_{i, t - \tau} D_{\tau}, \ \phi_i \bigg) & \quad \forall  i = 1, \dots, n, \quad t = 1, \dots, T
+\end{align*}
+```
+"""
 @model function NegBinomialWeeklyAdjustedTesting(
     C, X, D, num_cond, ::Type{T} = Float64;
     weekly_case_variation = missing, ϕ = missing
@@ -345,6 +427,43 @@ end
     return X
 end
 
+@doc raw"""
+    RegionalFlux(F_id, F_in, F_out, W, R, X_cond[, ::Type{T}]; kwargs...)
+
+Model latent infections `X` using a regional flux model.
+
+# Arguments
+- `F_id::AbstractMatrix`: diagonal flux matrix representing local infection.
+- `F_out::AbstractMatrix`: flux matrix representing outgoing infections.
+- `F_in::AbstractMatrix`: flux matrix representing incoming infections.
+- `W::AbstractVector`: generation distribution/infection profile of length `< num_times`, i.e.
+    `W[t]` is the probability of a secondary infection after `t` steps.
+- `R::AbstractMatrix`: Rt estimate for region `i` at time `t`, e.g. as returned by [`SpatioTemporalGP`](@ref).
+- `X_cond::AbstractMatrix=nothing`: Precomputed Xt before the start of the modelling period to condition on.
+
+# Keyword arguments
+- `σ_ξ = missing`: square root of variance of the "global" infection pressure `ξ`.
+- `ξ = missing`: "global" infection pressure.
+- `β = missing`: weight used in convex combination of of `F_in` and `F_out`.
+- `ρₜ = missing`: autoregressive process modelling time-variation of flux-matrices.
+- `ψ = missing`: scale for latent infections.
+
+# Mathematical description
+```math
+\begin{align*}
+  \underline{\text{AR-process:}} \\
+  \mu_{\mathrm{AR}} & \sim \mathcal{N}(-2.19, 0.25) \\
+  \sigma_{\mathrm{AR}} & \sim \mathcal{N}_{ + }(0, 0.25) \\
+  \tilde{\alpha} & \sim \mathcal{N}\big(0, 1 - e^{- \Delta t / 28} \big) \\
+  \alpha & := 1 - \mathrm{constrain}(\tilde{\alpha}, 0, 1) \\
+  \tilde{\rho} & \sim \mathrm{AR}_1(\alpha, \mu_{\mathrm{AR}}, \sigma_{\mathrm{AR}}) \\
+  \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
+  \underline{\text{Flux matrix:}} \\
+  \beta & \sim \mathrm{Uniform}(0, 1) \\
+  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T
+\end{align*}
+```
+"""
 @model function RegionalFlux(
     F_id, F_in, F_out,
     W, R, X_cond,
@@ -378,6 +497,14 @@ end
     return X_full
 end
 
+"""
+    rmap(args...; kwargs...)
+
+Vectorized implementation of full Rmap model.
+
+See [`rmap_naive`](@ref) for description of arguments, the model and example code,
+where you simply have to replace `rmap_naive` with `rmap`.
+"""
 @model function rmap(
     C, D, W,
     F_id, F_out, F_in,
