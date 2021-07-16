@@ -1,5 +1,8 @@
 import StatsFuns: normlogpdf
-𝒩₊(μ, σ) = truncated(Normal(μ, σ), 0, Inf)
+function 𝒩₊(μ, σ)
+    T = μ isa AbstractFloat ? typeof(μ) : typeof(float(μ))
+    truncated(Normal(μ, σ), zero(T), T(Inf))
+end
 
 """
     lowerboundednormlogpdf(μ, σ, x, lb)
