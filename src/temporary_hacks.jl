@@ -58,6 +58,18 @@ function DynamicPPL._getvalue(nt::ComponentArrays.ComponentArray, sym::Val, inds
     return DynamicPPL._getindex(value, inds)
 end
 
+function ChainRulesCore.rrule(::typeof(getproperty), x::ComponentArrays.ComponentArray, s::Union{Symbol, Val})
+    function getproperty_adjoint(Δ)
+        zero_x = zero(x)
+        if !(eltype(Δ) === Nothing)
+            setproperty!(zero_x, s, Δ)
+        end
+        return (ChainRulesCore.NoTangent(), zero_x, ChainRulesCore.NoTangent())
+    end
+
+    return getproperty(x, s), getproperty_adjoint
+end
+
 # Turing.jl-related
 # Makes it so we can use the samples from AHMC as we would a chain obtained from Turing.jl.
 struct SimpleTransition{T, L, S}
