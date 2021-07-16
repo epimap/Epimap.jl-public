@@ -122,7 +122,7 @@ Note that those with default value `missing` will be sampled if not specified.
     @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
-    @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
+    @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond, T)
 
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
 end
