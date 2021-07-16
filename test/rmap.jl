@@ -17,23 +17,13 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
         condition_observations = true
     )
         # Construct the model arguments from data
-        setup_args = Rmap.setup_args(
+        args = Rmap.setup_args(
             Rmap.rmap_naive, data, T;
             num_condition_days = num_condition_days,
             num_steps = num_steps,
             timestep = timestep,
             condition_observations = condition_observations
         )
-
-        # Arguments not related to the data which are to be set up
-        default_args = (
-            ρ_spatial = 10.0,
-            ρ_time = 0.1,
-            σ_spatial = 0.1,
-            σ_local = 0.1,
-            σ_ξ = 1.0
-        )
-        args = merge(setup_args, default_args)
 
         return adapt(Epimap.FloatMaybeAdaptor{T}(), args)
     end
@@ -120,7 +110,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
             # Instantiate model
             args = make_default_args(data, T)
-            m = Rmap.rmap_naive(args...);
+            m = Rmap.rmap_naive(args..., T);
 
             # `make_logjoint`
             logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m)
@@ -179,7 +169,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
             args = make_default_args(data, T)
 
             # `make_logjoint`
-            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(Rmap.rmap_naive(args...))
+            logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(Rmap.rmap_naive(args..., T))
 
             @unpack F_id, F_in, F_out = args
             @unpack β, ρₜ = θ_init
