@@ -30,34 +30,25 @@ mkpath(intermediatedir())
 # const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "epimap-data", "processed_data")
 const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data")
 data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
+@info "Doing inference for $(length(data.area_names)) regions."
+
 const T = Float32
 const model_def = Rmap.rmap_naive
 
 # Construct the model arguments from data
-setup_args, dates = Rmap.setup_args(
+args, dates = Rmap.setup_args(
     model_def, data, T;
     num_steps = 15,
     timestep = Week(1),
-    include_dates = true,
-    last_date = Date(2021, 06, 01)
+    include_dates = true
 )
 
 serialize(intermediatedir("dates.jls"), dates)
 
-# Arguments not related to the data which are to be set up
-default_args = (
-    ρ_spatial = 10.0,
-    ρ_time = 200.0,
-    σ_spatial = missing,
-    σ_local = missing,
-    σ_ξ = 0.1
-)
-
-args = adapt(Epimap.FloatMaybeAdaptor{T}(), merge(setup_args, default_args))
-serialize(intermediatedir("args.jls"), args)
-
 # Instantiate model
-m = model_def(args...);
+m = model_def(args...; ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1));
+serialize(intermediatedir("args.jls"), m.args)
+
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
 
@@ -74,35 +65,35 @@ Zygote.gradient(logπ_unconstrained, ϕ_init)
 ### SAMPLING ###
 ################
 # Setup the sampler.
-D = length(ϕ_init)
-metric = DiagEuclideanMetric(T, D)
-hamiltonian = Hamiltonian(metric, logπ_unconstrained, Zygote)
+D = length(ϕ_init);
+metric = DiagEuclideanMetric(T, D);
+hamiltonian = Hamiltonian(metric, logπ_unconstrained, Zygote);
 
 # Get initial parameters.
 # ϕ_init = rand(T, D)
 
 # Find a good step-size.
 @info "Finding a good stepsize..."
-initial_ϵ = find_good_stepsize(hamiltonian, ϕ_init)
+initial_ϵ = find_good_stepsize(hamiltonian, ϕ_init);
 @info "Found initial stepsize" initial_ϵ
 
 # Construct integrator and trajectory.
-integrator = Leapfrog(initial_ϵ)
+integrator = Leapfrog(initial_ϵ);
 
-τ = Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn(8, 1000.0))
-κ = HMCKernel(τ)
-adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(T(0.8), integrator))
+τ = Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn(8, 1000.0));
+κ = HMCKernel(τ);
+adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(T(0.8), integrator));
 
 # Set-up for AbstractMCMC.
 import AdvancedHMC: AbstractMCMC
-rng = Turing.Random.MersenneTwister(43)
+rng = Turing.Random.MersenneTwister(43);
 
-sampler = AdvancedHMC.HMCSampler(κ, metric, adaptor)
+sampler = AdvancedHMC.HMCSampler(κ, metric, adaptor);
 model = AdvancedHMC.DifferentiableDensityModel(hamiltonian.ℓπ, hamiltonian.∂ℓπ∂θ);
 
 # Parameters
-nadapts = 1_000;
-nsamples = 1_000;
+nadapts = 500;
+nsamples = 500;
 
 # Callback to use for progress-tracking.
 cb1 = AdvancedHMC.HMCProgressCallback(nadapts + nsamples, progress = true, verbose = false)
@@ -173,7 +164,7 @@ states = [state];
         SimpleTransition(θ, transition.z.ℓπ.value + logjac, transition.stat)
     end
     cb2(rng, model, sampler, t, state, state.i; it.kwargs...)
-    AbstractMCMC.save!!(samples, t, state.i, model, sampler, nsamples)
+    AbstractMCMC.save!!(samples, t, state.i, model, sampler)
 end
 
 # Serialize
@@ -198,9 +189,12 @@ serialize(intermediatedir("kwargs_adaptation.jls"), it.kwargs)
     end
     
     # Save sample
-    t = SimpleTransition(b⁻¹(transition.z.θ), transition.z.ℓπ.value, transition.stat)
+    t = let
+        θ, logjac = forward(b⁻¹, transition.z.θ)
+        SimpleTransition(θ, transition.z.ℓπ.value + logjac, transition.stat)
+    end
     cb2(rng, model, sampler, t, state, state.i; it.kwargs...)
-    AbstractMCMC.save!!(samples, t, state.i, model, sampler, nsamples)
+    AbstractMCMC.save!!(samples, t, state.i, model, sampler)
 end
 
 serialize(intermediatedir("state_last.jls"), state)
