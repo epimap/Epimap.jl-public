@@ -390,7 +390,9 @@ version = "2.1.0"
 
 [[DynamicPPL]]
 deps = ["AbstractMCMC", "AbstractPPL", "BangBang", "Bijectors", "ChainRulesCore", "Distributions", "MacroTools", "Random", "Setfield", "ZygoteRules"]
-path = "../../public/DynamicPPL.jl"
+git-tree-sha1 = "259ccac66ed4b7e7d9e0669f054623cf6627d403"
+repo-rev = "tor/simple-varinfo-v2"
+repo-url = "https://github.com/TuringLang/DynamicPPL.jl"
 uuid = "366bfd00-2699-11ea-058f-f148b4cae6d8"
 version = "0.12.3"
 
