@@ -188,7 +188,8 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
     σ_spatial = missing,
     σ_local = missing,
     ρ_spatial = missing,
-    ρ_time = missing
+    ρ_time = missing,
+    shift = 0.5
 ) where {T}
     num_steps = size(K_time, 1)
     num_regions = size(K_spatial, 1)
@@ -209,10 +210,12 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
     L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
     U_time = time_U(K_time, ρ_time)
 
-    # Obtain the sample
+    # Obtain realization of log-R.
     f = L_space * E * U_time
 
-    return exp.(f)
+    # Compute R.
+    R = exp.(f .- T(shift))
+    return R
 end
 
 @model function LogisticAR1(
