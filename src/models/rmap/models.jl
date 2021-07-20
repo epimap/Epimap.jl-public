@@ -100,7 +100,7 @@ julia> # Instantiate the model.
   \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Flux matrix:}} \\
   \beta & \sim \mathrm{Uniform}(0, 1) \\
-  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T \\
+  F_{t} & := (1 - \rho_t) F_{\mathrm{id}} + \rho_t \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Latent process:}} \\
   \xi & \sim \mathcal{N}_{ + }(0, \sigma_{\xi}^2) \\
   Z_{i, t} & := \sum_{\tau = 1}^{t} I(\tau < T_{\mathrm{flux}}) X_{i, t - \tau} W_{\tau} & \quad \forall i = 1, \dots, n, \quad t = 1, \dots, T \\
@@ -401,7 +401,7 @@ end
         t_step = (t - num_cond - 1) ÷ days_per_step + 1
 
         # Flux matrix
-        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        Fₜ = @. (1 - ρₜ[t_step]) * F_id + ρₜ[t_step] * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
         # Eq. (4)
         # offset t's to account for the extra conditioning days of Xt
@@ -459,7 +459,7 @@ Model latent infections `X` using a regional flux model.
   \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Flux matrix:}} \\
   \beta & \sim \mathrm{Uniform}(0, 1) \\
-  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T
+  F_{t} & := (1 - \rho_t) F_{\mathrm{id}} + \rho_t \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T
 \end{align*}
 ```
 """
@@ -539,7 +539,7 @@ function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
     # Tullio.jl doesn't seem to work nicely with `Diagonal`.
     F_id_ = F_id isa Diagonal ? Matrix(F_id) : F_id
 
-    @tullio F[i, j, t] := oneminusρₜ[t] * F_cross[i, j] + ρₜ[t] * F_id_[i, j]
+    @tullio F[i, j, t] := oneminusρₜ[t] * F_id_[i, j] + ρₜ[t] * F_cross[i, j]
 
     # # NOTE: Doesn't seem faster than the above code.
     # # Everything within one operation to minimize memory-allocation.
