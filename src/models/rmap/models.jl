@@ -169,8 +169,8 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
   f_{\mathrm{time}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}^{1 / \rho_{\mathrm{time}}} \Big) \\
   \underline{\text{Space:}} \\
   \rho_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
-  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
-  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 0.5) \\
+  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 0.5) \\
   % \big( k_{\mathrm{spatial}} \big)_{i, j} & := \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}(i, j)^{1 / \rho_{\mathrm{spatial}}} & \quad \forall i, j = 1, \dots, n \\
   % L_{\mathrm{space}} & := \mathrm{cholesky}(k_{\mathrm{spatial}}) \\
   f_{\mathrm{space}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}^{1 / \rho_{\mathrm{spatial}}} \Big) \\
