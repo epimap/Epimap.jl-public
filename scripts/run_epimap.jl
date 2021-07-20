@@ -7,7 +7,7 @@ using TuringCallbacks
 
 using Serialization, DrWatson, Dates
 
-scriptsdir("utils.jl")
+include(scriptsdir("utils.jl"))
 
 macro cleanbreak(ex)
     quote
@@ -23,8 +23,8 @@ macro cleanbreak(ex)
     end
 end
 
-const _gitname = Epimap.defaultname(Epimap; include_commit=true)
-const _intermediatedir = projectdir("intermediate", "$(Dates.now())-$(gitname)")
+const _gitname = default_name(Epimap; include_commit_id=true)
+const _intermediatedir = projectdir("intermediate", "$(Dates.now())-$(_gitname)")
 intermediatedir() = _intermediatedir
 intermediatedir(args...) = joinpath(intermediatedir(), args...)
 mkpath(intermediatedir())
