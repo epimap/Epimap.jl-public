@@ -108,7 +108,11 @@ stat = Series(
     # Estimators using only the last 1000 samples
     WindowStat(100, Series(Mean(), Variance(), AutoCov(10), KHist(100)))
 )
-cb2 = TensorBoardCallback("tensorboard_logs/$(_gitname)", stat, include = ["ψ", "ξ", "σ_spatial", "σ_local"])
+cb2 = TensorBoardCallback(
+    "tensorboard_logs/$(_gitname)-ρ_time=$(ρ_time)",
+    stat,
+    include = ["ψ", "ξ", "σ_spatial", "σ_local"]
+)
 
 # HACK: Super-hacky impl. Should improve `TuringCallbacks` to be more flexible instead.
 function Turing.Inference._params_to_array(ts::Vector{<:SimpleTransition})
