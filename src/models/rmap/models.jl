@@ -189,7 +189,7 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
     σ_local = missing,
     ρ_spatial = missing,
     ρ_time = missing,
-    shift = 0.5
+    shift = 0.0
 ) where {T}
     num_steps = size(K_time, 1)
     num_regions = size(K_spatial, 1)
@@ -879,7 +879,8 @@ end
         # Obtain the sample
         f = L_space * E * U_time
         # Repeat Rt to get Rt for every day in constant region
-        R = exp.(f .- T(0.5))
+        R = exp.(f)
+        maximum(R) > 5 && return T(-Inf)
 
         # # If we get an unreasonable value for `R`, we short-circuit.
         # maximum(R) > 5 && return T(-Inf)
