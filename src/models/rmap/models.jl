@@ -880,10 +880,9 @@ end
         f = L_space * E * U_time
         # Repeat Rt to get Rt for every day in constant region
         R = exp.(f)
-        # maximum(R) > 5 && return T(-Inf)
 
-        # # If we get an unreasonable value for `R`, we short-circuit.
-        # maximum(R) > 5 && return T(-Inf)
+        # If we get an unreasonable value for `R`, we short-circuit.
+        maximum(R) > 10 && return T(-Inf)
 
         ### Flux ###
         # Flux parameters
