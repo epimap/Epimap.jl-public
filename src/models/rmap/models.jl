@@ -882,7 +882,7 @@ end
         R = exp.(f)
 
         # If we get an unreasonable value for `R`, we short-circuit.
-        maximum(R) > 10 && return T(-Inf)
+        maximum(R) > 5 && return T(-Inf)
 
         ### Flux ###
         # Flux parameters
