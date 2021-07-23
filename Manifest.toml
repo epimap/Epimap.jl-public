@@ -1517,7 +1517,9 @@ version = "0.1.3"
 
 [[TuringUtils]]
 deps = ["AbstractMCMC", "Bijectors", "ComponentArrays", "DynamicPPL", "MCMCChains", "ProgressMeter", "Random", "Turing"]
-path = "../../public/TuringUtils.jl"
+git-tree-sha1 = "325d52c67d0b070dc46b0d24ba1eaba1276280fe"
+repo-rev = "tor/immutable-varinfo-compat"
+repo-url = "https://github.com/torfjelde/TuringUtils.jl"
 uuid = "5eca0922-168d-4ac7-867c-11261f9b792b"
 version = "0.1.0"
 
