@@ -90,9 +90,9 @@ uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[ArviZ]]
 deps = ["Conda", "DataFrames", "Markdown", "NamedTupleTools", "PyCall", "PyPlot", "REPL", "Requires", "StatsBase"]
-git-tree-sha1 = "c2e545b2c1f4113ecc05a3b333309873c44bf52c"
+git-tree-sha1 = "9aef853e451bb2f0357638bcd8797f43233bf55b"
 uuid = "131c737c-5715-5e2e-ad31-c244f01c1dc7"
-version = "0.5.4"
+version = "0.5.5"
 
 [[AxisAlgorithms]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
@@ -245,9 +245,9 @@ uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 
 [[ComponentArrays]]
 deps = ["ArrayInterface", "ChainRulesCore", "LinearAlgebra", "Requires"]
-git-tree-sha1 = "650d084f5ee7d5755033a32fa4a6f65b28e506ad"
+git-tree-sha1 = "414a81a8710e40583c5ba6cb01ba3b0dae3667e5"
 uuid = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
-version = "0.10.7"
+version = "0.11.1"
 
 [[CompositionsBase]]
 git-tree-sha1 = "455419f7e328a1a2493cabc6428d79e951349769"
@@ -296,9 +296,9 @@ version = "1.7.0"
 
 [[DataFrames]]
 deps = ["Compat", "DataAPI", "Future", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrettyTables", "Printf", "REPL", "Reexport", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
-git-tree-sha1 = "1dadfca11c0e08e03ab15b63aaeda55266754bad"
+git-tree-sha1 = "a19645616f37a2c2c3077a44bc0d3e73e13441d7"
 uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-version = "1.2.0"
+version = "1.2.1"
 
 [[DataFramesMeta]]
 deps = ["Chain", "DataFrames", "MacroTools", "Reexport"]
@@ -390,11 +390,11 @@ version = "2.1.0"
 
 [[DynamicPPL]]
 deps = ["AbstractMCMC", "AbstractPPL", "BangBang", "Bijectors", "ChainRulesCore", "Distributions", "MacroTools", "Random", "Setfield", "ZygoteRules"]
-git-tree-sha1 = "259ccac66ed4b7e7d9e0669f054623cf6627d403"
+git-tree-sha1 = "8ede482e1ac16116133b796ba3d124e25d6c7c31"
 repo-rev = "tor/simple-varinfo-v2"
 repo-url = "https://github.com/TuringLang/DynamicPPL.jl"
 uuid = "366bfd00-2699-11ea-058f-f148b4cae6d8"
-version = "0.12.3"
+version = "0.12.4"
 
 [[EarCut_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -699,9 +699,9 @@ version = "0.6.3"
 
 [[KernelFunctions]]
 deps = ["ChainRulesCore", "Compat", "CompositionsBase", "Distances", "FillArrays", "Functors", "LinearAlgebra", "Random", "Requires", "SpecialFunctions", "StatsBase", "StatsFuns", "TensorCore", "Test", "ZygoteRules"]
-git-tree-sha1 = "cf36ce0df28412e7012c6b6b0c7b79fc19190659"
+git-tree-sha1 = "0dc10a1782c6c45c19910c33afcfe2e5693621a6"
 uuid = "ec8451be-7e33-11e9-00cf-bbf324bd1392"
-version = "0.10.8"
+version = "0.10.9"
 
 [[LAME_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -835,9 +835,9 @@ version = "0.4.7"
 
 [[LoopVectorization]]
 deps = ["ArrayInterface", "DocStringExtensions", "IfElse", "LinearAlgebra", "OffsetArrays", "Polyester", "Requires", "SLEEFPirates", "Static", "StrideArraysCore", "ThreadingUtilities", "UnPack", "VectorizationBase"]
-git-tree-sha1 = "0df87659132a077b3f7e9f7fca8c9c59d4965071"
+git-tree-sha1 = "06c91d5495c32bca6b843551a1331c3cd2fb23d0"
 uuid = "bdcacae8-1622-11e9-2a5c-532679323890"
-version = "0.12.52"
+version = "0.12.53"
 
 [[MCMCChains]]
 deps = ["AbstractFFTs", "AbstractMCMC", "AxisArrays", "Compat", "Dates", "Distributions", "Formatting", "IteratorInterfaceExtensions", "LinearAlgebra", "MLJModelInterface", "NaturalSort", "PrettyTables", "Random", "RecipesBase", "Serialization", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "TableTraits", "Tables"]
@@ -953,9 +953,9 @@ version = "0.3.5"
 
 [[NamedArrays]]
 deps = ["Combinatorics", "DataStructures", "DelimitedFiles", "InvertedIndices", "LinearAlgebra", "Random", "Requires", "SparseArrays", "Statistics"]
-git-tree-sha1 = "9ba8ddb0c06a08b1bad81b7120d13288e5d766fa"
+git-tree-sha1 = "2fd5787125d1a93fbe30961bd841707b8a80d75b"
 uuid = "86f7a689-2022-50b4-a561-43c23ac3c673"
-version = "0.9.5"
+version = "0.9.6"
 
 [[NamedTupleTools]]
 git-tree-sha1 = "63831dcea5e11db1c0925efe5ef5fc01d528c522"
@@ -1001,9 +1001,9 @@ version = "1.3.5+0"
 
 [[OnlineStats]]
 deps = ["AbstractTrees", "Dates", "LinearAlgebra", "OnlineStatsBase", "OrderedCollections", "Random", "RecipesBase", "Statistics", "StatsBase", "SweepOperator"]
-git-tree-sha1 = "1b4e89557d0473841628ea480d1dc8371a4a4925"
+git-tree-sha1 = "e8ac92503ddcbe9ea586bfbb4c8e8c6e2c14d5cc"
 uuid = "a15396b6-48d5-5d58-9928-6d29437db91e"
-version = "1.5.10"
+version = "1.5.11"
 
 [[OnlineStatsBase]]
 deps = ["AbstractTrees", "Dates", "LinearAlgebra", "OrderedCollections", "Statistics", "StatsBase"]
@@ -1253,9 +1253,9 @@ version = "0.6.22"
 
 [[SciMLBase]]
 deps = ["ArrayInterface", "CommonSolve", "ConstructionBase", "Distributed", "DocStringExtensions", "IteratorInterfaceExtensions", "LinearAlgebra", "Logging", "RecipesBase", "RecursiveArrayTools", "StaticArrays", "Statistics", "Tables", "TreeViews"]
-git-tree-sha1 = "afa011b411259faa53ccf95b8f18f1e704535c3d"
+git-tree-sha1 = "f0bf114650476709dd04e690ab2e36d88368955e"
 uuid = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
-version = "1.18.1"
+version = "1.18.2"
 
 [[ScientificTypesBase]]
 git-tree-sha1 = "3f7ddb0cf0c3a4cff06d9df6f01135fa5442c99b"
@@ -1270,9 +1270,9 @@ version = "1.1.0"
 
 [[SentinelArrays]]
 deps = ["Dates", "Random"]
-git-tree-sha1 = "ffae887d0f0222a19c406a11c3831776d1383e3d"
+git-tree-sha1 = "35927c2c11da0a86bcd482464b93dadd09ce420f"
 uuid = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
-version = "1.3.3"
+version = "1.3.5"
 
 [[Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
@@ -1516,10 +1516,8 @@ uuid = "ea0860ee-d0ef-45ef-82e6-cc37d6be2f9c"
 version = "0.1.3"
 
 [[TuringUtils]]
-deps = ["Bijectors", "ComponentArrays", "DynamicPPL", "Turing"]
-git-tree-sha1 = "93c402941a32cda08d9a60b83612121ab9468956"
-repo-rev = "main"
-repo-url = "https://github.com/torfjelde/TuringUtils.jl"
+deps = ["AbstractMCMC", "Bijectors", "ComponentArrays", "DynamicPPL", "MCMCChains", "ProgressMeter", "Random", "Turing"]
+path = "../../public/TuringUtils.jl"
 uuid = "5eca0922-168d-4ac7-867c-11261f9b792b"
 version = "0.1.0"
 
@@ -1542,9 +1540,9 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [[VectorizationBase]]
 deps = ["ArrayInterface", "Hwloc", "IfElse", "Libdl", "LinearAlgebra", "Static"]
-git-tree-sha1 = "b609848b41158b8cc13a72dc6deb9511f9a96187"
+git-tree-sha1 = "ddeac5d8aad03c17bdc8efd45246e82fc52d12f4"
 uuid = "3d5dd08c-fd9d-11e8-17fa-ed2836048c2f"
-version = "0.20.22"
+version = "0.20.24"
 
 [[VersionParsing]]
 git-tree-sha1 = "80229be1f670524750d905f8fc8148e5a8c4537f"
