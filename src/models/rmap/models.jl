@@ -142,6 +142,39 @@ julia> # Instantiate the model.
     return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
 end
 
+function MCMCChainsUtils.setconverters(
+    chain::MCMCChains.Chains,
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(Rmap.rmap_naive)}
+)
+    # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
+    # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
+    # though for usage in `fast_generated_quantities` and `fast_predict` we could just set
+    # these to 0 as only the inferred variables are used.
+
+    X_converter_expr = quote
+        X_chain -> begin
+            # Interpolate the `X_cond` to avoid closing over `model`.
+            X_cond = $(model.args.X_cond)
+
+            num_regions = size(X_cond, 1)
+            num_iterations = length(X_chain)
+
+            # Convert chain into an array.
+            Xs = reshape(Array(X_chain), num_iterations, num_regions, :)
+
+            # Concatenate the `X_cond`.
+            cat(repeat(reshape(X_cond, 1, size(X_cond)...), inner=(num_iterations, 1, 1)), Xs; dims=3)
+        end
+    end
+    X_converter = eval(X_converter_expr)
+
+    return MCMCChainsUtils.setconverters(
+        chain,
+        # `eval` and make an `Expr` so we can interpolate constants, e.g. `size(m.args.C, 1)`.
+        X=X_converter
+    );
+end
+
 @doc raw"""
     SpatioTemporalGP(K_spatial, K_local, K_time[, ::Type{T}]; kwargs...)
 
@@ -393,10 +426,11 @@ end
 
     @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
 
-    X = TV(undef, (num_regions, num_times))
+    X = TV(undef, (num_regions, num_times - num_cond))
+    X_full = TV(undef, (num_regions, num_times))
 
     if X_cond !== nothing
-        X[:, 1:num_cond] = X_cond
+        X_full[:, 1:num_cond] = X_cond
     end
 
     for t = (num_cond + 1):num_times
@@ -409,24 +443,27 @@ end
         # Eq. (4)
         # offset t's to account for the extra conditioning days of Xt
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
+        Zₜ = X_full[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
         μ = R[:, t_step] .* Z̃ₜ .+ ξ
         if eltype(X) <: Integer
            for i = 1:num_regions
-                X[i, t] ~ NegativeBinomial3(μ[i], ψ)
+               X[i, t - num_cond] ~ NegativeBinomial3(μ[i], ψ)
             end
         else
             # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
             for i = 1:num_regions
-                X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
+                X[i, t - num_cond] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
             end
         end
+
+        # Update `X`.
+        X_full[:, t] = X[:, t - num_cond]
     end
 
-    return X
+    return X_full
 end
 
 @doc raw"""
@@ -657,7 +694,7 @@ end
 end
 
 function Bijectors.NamedBijector(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)},
     vi=VarInfo(model)
 )
     # Construct the corresponding bijector.
@@ -679,7 +716,7 @@ function Bijectors.NamedBijector(
     return b
 end
 
-function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)})
+function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)})
     # Construct an example `VarInfo`.
     vi = VarInfo(model)
     svi = SimpleVarInfo(vi)
@@ -717,7 +754,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)
     return (logjoint, logjoint_unconstrained, b, θ)
 end
 
-function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)})
     # Construct an example `VarInfo`.
     vi = Turing.VarInfo(model)
     # Adapt parameters to use desired `eltype`.
@@ -754,7 +791,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_
     return (logjoint, logjoint_unconstrained, b, θ)
 end
 
-function Epimap.precompute(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+function Epimap.precompute(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)})
     C = model.args.C
     X_cond = model.args.X_cond
 
@@ -775,7 +812,7 @@ end
 
 # To avoid ambiguity errors.
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     vi::DynamicPPL.AbstractVarInfo
 )
     model(vi, DynamicPPL.DefaultContext())
@@ -783,14 +820,14 @@ function DynamicPPL.logjoint(
 end
 
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     args
 )
     return DynamicPPL.logjoint(model, Epimap.precompute(model), args)
 end
 
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     precomputed,
     args
 )
@@ -798,7 +835,7 @@ function DynamicPPL.logjoint(
 end
 
 @generated function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive), outerkeys},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive), outerkeys},
     precomputed,
     args,
     ::Val{innerkeys}
