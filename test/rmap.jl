@@ -137,7 +137,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
                 @test ∇_zy ≈ ∇_fd
 
                 # Unconstrained space
-                DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
+                DynamicPPL.link!!(var_info, spl, Val(keys(θ_ca)))
                 ϕ = var_info[spl]
                 m(var_info)
 
