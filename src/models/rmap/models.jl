@@ -161,9 +161,7 @@ function MCMCChainsUtils.setconverters(
 
             # Convert chain into an array.
             Xs = reshape(Array(X_chain), num_iterations, num_regions, :)
-
-            # Concatenate the `X_cond`.
-            cat(repeat(reshape(X_cond, 1, size(X_cond)...), inner=(num_iterations, 1, 1)), Xs; dims=3)
+            return Xs
         end
     end
     X_converter = eval(X_converter_expr)
