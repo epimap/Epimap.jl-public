@@ -134,12 +134,18 @@ julia> # Instantiate the model.
     @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     ### Flux ###
-    @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
+    @submodel (X, Z) = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
     @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
 
-    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
+    return (;
+        R = repeat(R, inner=(1, days_per_step)),
+        X = X[:, (num_cond + 1):end],
+        B = B[:, (num_cond + 1):end],
+        C = C[:, (num_cond + 1):end],
+        Z
+    )
 end
 
 function MCMCChainsUtils.setconverters(
@@ -427,6 +433,8 @@ end
     X = TV(undef, (num_regions, num_times - num_cond))
     X_full = TV(undef, (num_regions, num_times))
 
+    Z = TV(undef, (num_regions, num_times - num_cond))
+
     if X_cond !== nothing
         X_full[:, 1:num_cond] = X_cond
     end
@@ -459,9 +467,12 @@ end
 
         # Update `X`.
         X_full[:, t] = X[:, t - num_cond]
+
+        # Save the computed `R` value.
+        Z[:, t - num_cond] = Zₜ
     end
 
-    return X_full
+    return (; X_full, Z)
 end
 
 @doc raw"""
