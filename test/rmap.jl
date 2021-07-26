@@ -1,5 +1,7 @@
 using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
+include("test_data.jl")
+
 @testset "Rmap" begin
     data = let rmapdir = get(ENV, "EPIMAP_RMAP_DATADIR", "")
         if !isempty(rmapdir)
@@ -110,7 +112,7 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
             # Instantiate model
             args = make_default_args(data, T)
-            m = Rmap.rmap_naive(args..., T);
+            m = Rmap.rmap_naive(args..., T, ρ_time=T(100.0), ρ_spatial=T(0.1));
 
             # `make_logjoint`
             logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m)
@@ -118,7 +120,15 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
             # Check average difference
             spl = DynamicPPL.SampleFromPrior()
 
-            for i = 1:num_repeats
+            i = 1
+            max_num_repeats = 30
+            attempts = 0
+            while i ≤ num_repeats
+                attempts += 1
+                if attempts > max_num_repeats
+                    error("couldn't sample $(num_repeats) samples from the prior with finite logjoint in $(max_num_repeats)")
+                end
+
                 # Constrained space
                 var_info = DynamicPPL.VarInfo(m);
                 θ = var_info[spl]
@@ -126,6 +136,13 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
 
                 # `ComponentArray` impl
                 θ_ca = adapt(adaptor, ComponentArray(var_info))
+                # Due to possible lower numerical precision when using `Float32`
+                # we have have samples from the prior which are `-Inf32` for
+                # `logπ` but finite when using `Float64`.
+                # In these cases we just skip this particular sample from the prior.
+                # Note that we only increment `i` once we've performed all tests,
+                # hence the tests still need to pass `num_repeats` before progressing.
+                isfinite(logπ(θ_ca)) || continue
                 @test abs(DynamicPPL.getlogp(var_info) - logπ(θ_ca)) ≤ threshold
                 # Raw array impl
                 θ_ca_raw = ComponentArrays.getdata(θ_ca)
@@ -137,12 +154,13 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
                 @test ∇_zy ≈ ∇_fd
 
                 # Unconstrained space
-                DynamicPPL.link!(var_info, spl, Val(keys(θ_ca)))
+                DynamicPPL.link!!(var_info, spl, Val(keys(θ_ca)))
                 ϕ = var_info[spl]
                 m(var_info)
 
                 # `ComponentArray` impl
                 ϕ_ca = adapt(adaptor, ComponentArray(var_info))
+                isfinite(logπ_unconstrained(ϕ_ca)) || continue
                 @test abs(DynamicPPL.getlogp(var_info) - logπ_unconstrained(ϕ_ca)) ≤ threshold
                 # Raw array impl
                 ϕ_ca_raw = ComponentArrays.getdata(ϕ_ca)
@@ -158,6 +176,9 @@ using Epimap, Dates, Adapt, Test, Zygote, ForwardDiff, ComponentArrays, UnPack
                 @test logπ(θ_ca_raw) isa T
                 @test logπ_unconstrained(ϕ_ca) isa T
                 @test logπ_unconstrained(ϕ_ca_raw) isa T
+
+                # Increment
+                i += 1
             end
         end
     end

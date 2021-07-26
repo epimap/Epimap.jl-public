@@ -100,7 +100,7 @@ julia> # Instantiate the model.
   \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Flux matrix:}} \\
   \beta & \sim \mathrm{Uniform}(0, 1) \\
-  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T \\
+  F_{t} & := (1 - \rho_t) F_{\mathrm{id}} + \rho_t \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Latent process:}} \\
   \xi & \sim \mathcal{N}_{ + }(0, \sigma_{\xi}^2) \\
   Z_{i, t} & := \sum_{\tau = 1}^{t} I(\tau < T_{\mathrm{flux}}) X_{i, t - \tau} W_{\tau} & \quad \forall i = 1, \dots, n, \quad t = 1, \dots, T \\
@@ -134,12 +134,49 @@ julia> # Instantiate the model.
     @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     ### Flux ###
-    @submodel X = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
+    @submodel (X, Z) = RegionalFluxNaive(F_id, F_in, F_out, W, R, X_cond; days_per_step, σ_ξ)
 
     # Observe (if we're done imputing)
     @submodel (C, B) = NegBinomialWeeklyAdjustedTestingNaive(C, X, D, num_cond)
 
-    return (R = repeat(R, inner=(1, days_per_step)), X = X[:, (num_cond + 1):end], B = B[:, (num_cond + 1):end])
+    return (;
+        R = repeat(R, inner=(1, days_per_step)),
+        X = X[:, (num_cond + 1):end],
+        B = B[:, (num_cond + 1):end],
+        C = C[:, (num_cond + 1):end],
+        Z
+    )
+end
+
+function MCMCChainsUtils.setconverters(
+    chain::MCMCChains.Chains,
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(Rmap.rmap_naive)}
+)
+    # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
+    # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
+    # though for usage in `fast_generated_quantities` and `fast_predict` we could just set
+    # these to 0 as only the inferred variables are used.
+
+    X_converter_expr = quote
+        X_chain -> begin
+            # Interpolate the `X_cond` to avoid closing over `model`.
+            X_cond = $(model.args.X_cond)
+
+            num_regions = size(X_cond, 1)
+            num_iterations = length(X_chain)
+
+            # Convert chain into an array.
+            Xs = reshape(Array(X_chain), num_iterations, num_regions, :)
+            return Xs
+        end
+    end
+    X_converter = eval(X_converter_expr)
+
+    return MCMCChainsUtils.setconverters(
+        chain,
+        # `eval` and make an `Expr` so we can interpolate constants, e.g. `size(m.args.C, 1)`.
+        X=X_converter
+    );
 end
 
 @doc raw"""
@@ -169,8 +206,8 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
   f_{\mathrm{time}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{time}}^2 k_{\mathrm{time}}^{1 / \rho_{\mathrm{time}}} \Big) \\
   \underline{\text{Space:}} \\
   \rho_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
-  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 5) \\
-  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 5) \\
+  \sigma_{\mathrm{spatial}} & \sim \mathcal{N}_{ + }(0, 0.5) \\
+  \sigma_{\mathrm{local}} & \sim \mathcal{N}_{ + }(0, 0.5) \\
   % \big( k_{\mathrm{spatial}} \big)_{i, j} & := \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}(i, j)^{1 / \rho_{\mathrm{spatial}}} & \quad \forall i, j = 1, \dots, n \\
   % L_{\mathrm{space}} & := \mathrm{cholesky}(k_{\mathrm{spatial}}) \\
   f_{\mathrm{space}} & \sim \mathrm{GP} \Big( 0, \sigma_{\mathrm{local}}^2 \delta_{i, j} + \sigma_{\mathrm{spatial}}^2 k_{\mathrm{spatial}}^{1 / \rho_{\mathrm{spatial}}} \Big) \\
@@ -188,7 +225,8 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
     σ_spatial = missing,
     σ_local = missing,
     ρ_spatial = missing,
-    ρ_time = missing
+    ρ_time = missing,
+    shift = 0.0
 ) where {T}
     num_steps = size(K_time, 1)
     num_regions = size(K_spatial, 1)
@@ -209,10 +247,12 @@ Model of Rt for each region and time using a spatio-temporal Gaussian process.
     L_space = spatial_L(K_spatial, K_local, σ_spatial, σ_local, ρ_spatial)
     U_time = time_U(K_time, ρ_time)
 
-    # Obtain the sample
+    # Obtain realization of log-R.
     f = L_space * E * U_time
 
-    return exp.(f)
+    # Compute R.
+    R = exp.(f .- T(shift))
+    return R
 end
 
 @model function LogisticAR1(
@@ -390,10 +430,13 @@ end
 
     @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
 
-    X = TV(undef, (num_regions, num_times))
+    X = TV(undef, (num_regions, num_times - num_cond))
+    X_full = TV(undef, (num_regions, num_times))
+
+    Z = TV(undef, (num_regions, num_times - num_cond))
 
     if X_cond !== nothing
-        X[:, 1:num_cond] = X_cond
+        X_full[:, 1:num_cond] = X_cond
     end
 
     for t = (num_cond + 1):num_times
@@ -401,29 +444,35 @@ end
         t_step = (t - num_cond - 1) ÷ days_per_step + 1
 
         # Flux matrix
-        Fₜ = @. ρₜ[t_step] * F_id + (1 - ρₜ[t_step]) * (β * F_out + (1 - β) * F_in) # Eq. (16)
+        Fₜ = @. (1 - ρₜ[t_step]) * F_id + ρₜ[t_step] * (β * F_out + (1 - β) * F_in) # Eq. (16)
 
         # Eq. (4)
         # offset t's to account for the extra conditioning days of Xt
         ts_prev_infect = reverse(max(1, t - prev_infect_cutoff):t - 1)
-        Zₜ = X[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
+        Zₜ = X_full[:, ts_prev_infect] * W[1:min(prev_infect_cutoff, t - 1)]
         Z̃ₜ = Fₜ * Zₜ # Eq. (5)
 
         # Use continuous approximation if the element type of `X` is non-integer.
         μ = R[:, t_step] .* Z̃ₜ .+ ξ
         if eltype(X) <: Integer
            for i = 1:num_regions
-                X[i, t] ~ NegativeBinomial3(μ[i], ψ)
+               X[i, t - num_cond] ~ NegativeBinomial3(μ[i], ψ)
             end
         else
             # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
             for i = 1:num_regions
-                X[i, t] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
+                X[i, t - num_cond] ~ 𝒩₊(μ[i], sqrt((1 + ψ) * μ[i]))
             end
         end
+
+        # Update `X`.
+        X_full[:, t] = X[:, t - num_cond]
+
+        # Save the computed `R` value.
+        Z[:, t - num_cond] = Zₜ
     end
 
-    return X
+    return (; X_full, Z)
 end
 
 @doc raw"""
@@ -459,7 +508,7 @@ Model latent infections `X` using a regional flux model.
   \rho_t &:= \mathrm{constrain}(\tilde{\rho}_t, 0, 1) & \quad \forall t = 1, \dots, T \\
   \underline{\text{Flux matrix:}} \\
   \beta & \sim \mathrm{Uniform}(0, 1) \\
-  F_{t} & := \rho_t F_{\mathrm{id}} + (1 - \rho_t) \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T
+  F_{t} & := (1 - \rho_t) F_{\mathrm{id}} + \rho_t \big(\beta F_{\mathrm{fwd}} + (1 - \beta) F_{\mathrm{rev}} \big) & \quad \forall t = 1, \dots, T
 \end{align*}
 ```
 """
@@ -539,7 +588,7 @@ function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
     # Tullio.jl doesn't seem to work nicely with `Diagonal`.
     F_id_ = F_id isa Diagonal ? Matrix(F_id) : F_id
 
-    @tullio F[i, j, t] := oneminusρₜ[t] * F_cross[i, j] + ρₜ[t] * F_id_[i, j]
+    @tullio F[i, j, t] := oneminusρₜ[t] * F_id_[i, j] + ρₜ[t] * F_cross[i, j]
 
     # # NOTE: Doesn't seem faster than the above code.
     # # Everything within one operation to minimize memory-allocation.
@@ -654,7 +703,7 @@ end
 end
 
 function Bijectors.NamedBijector(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)},
     vi=VarInfo(model)
 )
     # Construct the corresponding bijector.
@@ -676,7 +725,7 @@ function Bijectors.NamedBijector(
     return b
 end
 
-function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)})
+function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)})
     # Construct an example `VarInfo`.
     vi = VarInfo(model)
     svi = SimpleVarInfo(vi)
@@ -714,7 +763,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap)
     return (logjoint, logjoint_unconstrained, b, θ)
 end
 
-function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)})
     # Construct an example `VarInfo`.
     vi = Turing.VarInfo(model)
     # Adapt parameters to use desired `eltype`.
@@ -751,7 +800,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_
     return (logjoint, logjoint_unconstrained, b, θ)
 end
 
-function Epimap.precompute(model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)})
+function Epimap.precompute(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)})
     C = model.args.C
     X_cond = model.args.X_cond
 
@@ -772,7 +821,7 @@ end
 
 # To avoid ambiguity errors.
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     vi::DynamicPPL.AbstractVarInfo
 )
     model(vi, DynamicPPL.DefaultContext())
@@ -780,14 +829,14 @@ function DynamicPPL.logjoint(
 end
 
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     args
 )
     return DynamicPPL.logjoint(model, Epimap.precompute(model), args)
 end
 
 function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive)},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)},
     precomputed,
     args
 )
@@ -795,7 +844,7 @@ function DynamicPPL.logjoint(
 end
 
 @generated function DynamicPPL.logjoint(
-    model::DynamicPPL.Model{Epimap.evaluatortype(rmap_naive), outerkeys},
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive), outerkeys},
     precomputed,
     args,
     ::Val{innerkeys}
@@ -877,6 +926,9 @@ end
         f = L_space * E * U_time
         # Repeat Rt to get Rt for every day in constant region
         R = exp.(f)
+
+        # If we get an unreasonable value for `R`, we short-circuit.
+        maximum(R) > 5 && return T(-Inf)
 
         ### Flux ###
         # Flux parameters

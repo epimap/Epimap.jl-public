@@ -7,6 +7,8 @@ using TuringCallbacks
 
 using Serialization, DrWatson, Dates
 
+include(scriptsdir("utils.jl"))
+
 macro cleanbreak(ex)
     quote
         try
@@ -21,16 +23,19 @@ macro cleanbreak(ex)
     end
 end
 
-const _intermediatedir = projectdir("intermediate", "$(Dates.now())")
+const _gitname = default_name(Epimap; include_commit_id=true)
+const _intermediatedir = projectdir("intermediate", "$(Dates.now())-$(_gitname)")
 intermediatedir() = _intermediatedir
 intermediatedir(args...) = joinpath(intermediatedir(), args...)
 mkpath(intermediatedir())
+@info "Output of run is found in $(intermediatedir())"
 
 # Load data
 # const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "epimap-data", "processed_data")
 const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data")
 data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
-@info "Doing inference for $(length(data.area_names)) regions."
+area_names = data.areas[:, :area]
+@info "Doing inference for $(length(area_names)) regions."
 
 const T = Float32
 const model_def = Rmap.rmap_naive
@@ -43,6 +48,8 @@ args, dates = Rmap.setup_args(
     include_dates = true
 )
 
+# With `area_names` and `dates` we can recover the data being used.
+serialize(intermediatedir("area_names.jls"), area_names)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
@@ -92,8 +99,8 @@ sampler = AdvancedHMC.HMCSampler(κ, metric, adaptor);
 model = AdvancedHMC.DifferentiableDensityModel(hamiltonian.ℓπ, hamiltonian.∂ℓπ∂θ);
 
 # Parameters
-nadapts = 500;
-nsamples = 500;
+nadapts = 1_000;
+nsamples = 1_000;
 
 # Callback to use for progress-tracking.
 cb1 = AdvancedHMC.HMCProgressCallback(nadapts + nsamples, progress = true, verbose = false)
@@ -105,7 +112,11 @@ stat = Series(
     # Estimators using only the last 1000 samples
     WindowStat(100, Series(Mean(), Variance(), AutoCov(10), KHist(100)))
 )
-cb2 = TensorBoardCallback("tensorboard_logs/run", stat, include = ["ψ", "ξ", "σ_spatial", "σ_local"])
+cb2 = TensorBoardCallback(
+    "tensorboard_logs/$(_gitname)",
+    stat,
+    include = ["ψ", "ξ", "σ_spatial", "σ_local"]
+)
 
 # HACK: Super-hacky impl. Should improve `TuringCallbacks` to be more flexible instead.
 function Turing.Inference._params_to_array(ts::Vector{<:SimpleTransition})
