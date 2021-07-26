@@ -18,6 +18,7 @@ import Zygote: FillArrays
 
 using LinearAlgebra
 using Turing
+using DynamicPPL
 using Distributions
 using KernelFunctions
 using PDMats
@@ -27,6 +28,8 @@ using TensorOperations
 using Tullio
 
 using TuringUtils, ComponentArrays
+
+import Turing.DynamicPPL: @submodel
 
 include("models.jl")
 include("data.jl")

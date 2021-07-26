@@ -1,5 +1,8 @@
 import StatsFuns: normlogpdf
-𝒩₊(μ, σ) = truncated(Normal(μ, σ), 0, Inf)
+function 𝒩₊(μ, σ)
+    T = μ isa AbstractFloat ? typeof(μ) : typeof(float(μ))
+    truncated(Normal(μ, σ), zero(T), T(Inf))
+end
 
 """
     lowerboundednormlogpdf(μ, σ, x, lb)
@@ -156,13 +159,6 @@ Base.eltype(::AR1{T1, T2, T3}) where {T1, T2, T3} = promote_type(
 )
 
 Bijectors.bijector(::AR1) = Bijectors.Identity{1}()
-
-function Bijectors.bijector(td::Bijectors.TransformedDistribution)
-    # Map back to original space and then from space of `dist`
-    # to real space.
-    b = bijector(td.dist)
-    return inv(td.transform) ∘ b
-end
 
 function Distributions.rand(rng::Random.AbstractRNG, ar::AR1)    
     # Sample

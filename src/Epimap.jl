@@ -14,7 +14,8 @@ using DocStringExtensions
 export Rmap,
     NegativeBinomial2,
     NegativeBinomial3,
-    AR1
+    AR1,
+    SimpleTransition
 
 """
     make_logdensity(model_def, args...)

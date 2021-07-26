@@ -1,4 +1,5 @@
 using Adapt, PDMats, LinearAlgebra
+using DynamicPPL: SimpleVarInfo
 
 """
     FloatMaybeAdaptor{T<:Real}
@@ -36,4 +37,8 @@ function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::PDiagMat)
 end
 function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::Cholesky)
     Cholesky(adapt(adaptor, x.factors), adapt(adaptor, x.uplo), adapt(adaptor, x.info))
+end
+
+function Adapt.adapt_structure(adaptor::FloatMaybeAdaptor, x::SimpleVarInfo)
+    return SimpleVarInfo(adapt(adaptor, x.θ), adapt(adaptor, x.logp))
 end

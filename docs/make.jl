@@ -16,5 +16,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Rmap" => "rmap.md",
+        "Others" => "others.md"
     ],
 )
