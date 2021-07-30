@@ -48,3 +48,22 @@ function default_name(mod; include_commit_id=true)
 
     return name
 end
+
+"""
+    getcommit(run)
+
+Return the commit ID from the run name.
+
+Assumes `name` came form [`default_path`](@ref).
+"""
+getcommit(run::String) = split(run, "-")[end]
+
+"""
+    getcommit(repo::LibGit2.GitRepo)
+
+Return the commit ID of HEAD for `repo`.
+"""
+function getcommit(repo::LibGit2.GitRepo)
+    githead = LibGit2.head(repo)
+    return string(LibGit2.GitHash(LibGit2.peel(LibGit2.GitCommit, githead)))
+end
