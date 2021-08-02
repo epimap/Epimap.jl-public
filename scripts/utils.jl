@@ -67,3 +67,37 @@ function getcommit(repo::LibGit2.GitRepo)
     githead = LibGit2.head(repo)
     return string(LibGit2.GitHash(LibGit2.peel(LibGit2.GitCommit, githead)))
 end
+
+"""
+    available_runs(; prefix=nothing, commit=nothing, full_path=false)
+
+Return available runs.
+
+# Keyword arguments
+- `prefix`: filters based on the prefix of the runs.
+- `commit`: filters based on the commit id from which the run is produced.
+- `full_path`: if `true`, the full path to each run will be returned rather
+  than only their directory names.
+"""
+function available_runs(; prefix=nothing, commit=nothing, full_path=false)
+    runs = readdir(projectdir("intermediate"))
+    if prefix !== nothing
+        filter!(Base.Fix2(startswith, prefix), runs)
+    end
+
+    if commit !== nothing
+        commit_ids = map(runs) do run
+            last(split(run, "-"))
+        end
+        indices = findall(Base.Fix2(startswith, commit), commit_ids)
+        runs = runs[indices]
+    end
+
+    if full_path
+        map!(runs, runs) do run
+            projectdir("intermediate", run)
+        end
+    end
+
+    return runs
+end
