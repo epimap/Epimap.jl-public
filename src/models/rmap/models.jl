@@ -123,9 +123,9 @@ julia> # Instantiate the model.
     σ_ξ = missing
 ) where {T}
     num_regions = size(C, 1)
-    num_times = size(C, 2)
+    num_infer = size(C, 2)
     num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
-    num_infer = num_times - num_cond
+    num_times = num_infer + num_cond
 
     @assert num_infer % days_per_step == 0
     num_steps = num_infer ÷ days_per_step
@@ -142,8 +142,8 @@ julia> # Instantiate the model.
     return (;
         R = repeat(R, inner=(1, days_per_step)),
         X = X[:, (num_cond + 1):end],
-        B = B[:, (num_cond + 1):end],
-        C = C[:, (num_cond + 1):end],
+        B = B,
+        C = C,
         Z
     )
 end
@@ -282,7 +282,8 @@ end
     weekly_case_variation = missing,
     ϕ = missing
 )
-    num_times = size(C, 2)
+    T = eltype(X)
+    num_infer = size(C, 2)
     num_regions = size(C, 1)
     test_delay_cutoff = length(D)
 
@@ -294,9 +295,15 @@ end
 
     # `B` is the observations _without_ weekly adjustment.
     B = similar(C)
-    for t = (num_cond + 1):num_times
-        ts_prev_delay = reverse(max(1, t - test_delay_cutoff):t - 1)
-        expected_positive_tests = X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, t - 1)]
+    for t = 1:num_infer
+        # `X` consists of _both_ `X_cond` and the sampled `X`.
+        ts_prev_delay = reverse(max(1, num_cond + t - test_delay_cutoff):num_cond + t - 1)
+        # Clamp the values to avoid numerical issues during sampling from the prior.
+        expected_positive_tests = clamp.(
+            X[:, ts_prev_delay] * D[1:min(test_delay_cutoff, num_cond + t - 1)],
+            T(1e-3),
+            T(1e7)
+        )
 
         expected_positive_tests_weekly_adj = (
             7 * weekly_case_variation[(t % 7) + 1] * expected_positive_tests
@@ -353,18 +360,20 @@ Return cases `C`, either sampled or observed.
     # identical to `rmap_naive`.
     # Ensures that we'll be using the same ordering as the original model.
     weekly_case_variation_reindex = map(1:7) do i
-        (i + num_cond) % 7 + 1
+        (i % 7) + 1
     end
     weekly_case_variation = weekly_case_variation[weekly_case_variation_reindex]
 
-    # Convolution
-    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+    # Convolution.
+    # Clamp the values to avoid numerical issues during sampling from the prior.
+    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))
 
     # Repeat one too many times and then extract the desired section `1:num_regions`
     num_days = size(expected_positive_tests, 2)
     weekly_case_variation = transpose(
         repeat(weekly_case_variation, outer=(num_days ÷ 7) + 1)[1:num_days]
     )
+
     expected_positive_tests_weekly_adj = 7 * expected_positive_tests .* weekly_case_variation
 
     # Observe
@@ -456,7 +465,7 @@ end
         μ = R[:, t_step] .* Z̃ₜ .+ ξ
         if eltype(X) <: Integer
            for i = 1:num_regions
-               X[i, t - num_cond] ~ NegativeBinomial3(μ[i], ψ)
+               X[i, t - num_cond] ~ NegativeBinomial3(μ[i], ψ; check_args=false)
             end
         else
             # Eq. (15), though there they use `Zₜ` rather than `Z̃ₜ`; I suspect they meant `Z̃ₜ`.
@@ -536,7 +545,7 @@ Model latent infections `X` using a regional flux model.
     num_infer = size(F, 3)
     @assert num_infer % days_per_step == 0
 
-    X ~ filldist(Flat(), num_regions, num_infer)
+    X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
     X_full = hcat(X_cond, X)
 
     # Compute the logdensity
@@ -575,7 +584,74 @@ where you simply have to replace `rmap_naive` with `rmap`.
     # Likelihood.
     @submodel C = NegBinomialWeeklyAdjustedTesting(C, X, D, num_cond, T)
 
-    return (R = R, X = X[:, num_cond + 1:end])
+    return (
+        R = repeat(R, inner=(1, days_per_step)),
+        X = X[:, num_cond + 1:end],
+        C = C,
+    )
+end
+
+@model function rmap_debiased(
+    logitπ, σ_debias, populations,
+    D, W,
+    F_id, F_out, F_in,
+    K_time, K_spatial, K_local,
+    days_per_step = 7,
+    X_cond = nothing,
+    ::Type{T} = Float64;
+    ρ_spatial = missing, ρ_time = missing,
+    σ_spatial = missing, σ_local = missing,
+    σ_ξ = missing
+) where {T}
+    num_cond = size(X_cond, 2)
+
+    # GP-model for R-value.
+    @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
+
+    # Latent infections.
+    @submodel X = RegionalFlux(F_id, F_in, F_out, W, R, X_cond, T; days_per_step, σ_ξ)
+
+    # Likelihood.
+    @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, T)
+
+    return (
+        R = repeat(R, inner=(1, days_per_step)),
+        X = X[:, num_cond + 1:end],
+        logitπ = logitπ,
+    )
+end
+
+@model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, ::Type{T}=Float64) where {T}
+    # Noise for cases
+    num_regions = size(X, 1)
+    ϕ ~ filldist(𝒩₊(T(0), T(5)), num_regions)
+
+    # Convolution.
+    # Clamp the values to avoid numerical issues during sampling from the prior.
+    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))
+
+    # Accumulate the weekly cases.
+    # expected_positive_tests_weekly = let tmp = expected_positive_tests
+    #     stride_iterator = TileIterator(axes(tmp), (size(tmp, 1), 7))
+    #     mapreduce(x -> mean(x; dims=2), hcat, (@views(tmp[I...]) for I in stride_iterator))
+    # end
+    # TODO: Write using Tullio.
+    expected_positive_tests_weekly = mapreduce(
+        x -> mean(x, dims=2),
+        hcat,
+        (@views(expected_positive_tests[:, i:i + 6]) for i = 1:7:size(expected_positive_tests, 2))
+    )
+
+    # Compute proportions.
+    expected_weekly_proportions = expected_positive_tests_weekly ./ populations
+    # Observe.
+    if logitπ === missing
+        logitπ ~ arraydist(Normal.(StatsFuns.logit.(expected_weekly_proportions), σ_debias))
+    else
+        Turing.@addlogprob! sum(@. StatsFuns.normlogpdf((logitπ - StatsFuns.logit(expected_weekly_proportions)) / σ_debias) - log(σ_debias))
+    end
+
+    return logitπ
 end
 
 function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
@@ -694,73 +770,12 @@ end
     return sum(nbinomlogpdf3.(
         expected_positive_tests_weekly_adj,
         ϕ,
-        T.(C[:, (num_cond + 1):end]) # conversion ensures precision is preserved
+        T.(C) # conversion ensures precision is preserved
     ))
 end
 
 @inline function rmap_loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond = 0)
     return _loglikelihood(C, X, D, ϕ, weekly_case_variation, num_cond)
-end
-
-function Bijectors.NamedBijector(
-    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)},
-    vi=VarInfo(model)
-)
-    # Construct the corresponding bijector.
-    b = TuringUtils.optimize_bijector(
-        Bijectors.bijector(vi; tuplify = true)
-    )
-
-    # Some are `Stacked` but with a univariate bijector, which causes issues.
-    new_bs = map(b.bs) do b
-        if b isa Bijectors.Stacked && length(b.bs) == 1 && length(b.ranges[1]) == 1
-            b.bs[1]
-        else
-            b
-        end
-    end
-
-    # Unfortunately we have to fix the `X` component, which is a `Flat`, by hand.
-    b = Bijectors.NamedBijector(merge(new_bs, (X = Bijectors.Log{2}(), )))
-    return b
-end
-
-function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap)})
-    # Construct an example `VarInfo`.
-    vi = VarInfo(model)
-    svi = SimpleVarInfo(vi)
-    # Adapt parameters to use desired `eltype`.
-    adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
-    θ = adapt(adaptor, ComponentArray(svi.θ))
-    # Construct the corresponding bijector.
-    b = Bijectors.NamedBijector(model, vi)
-
-    # Adapt bijector parameters to use desired `eltype`.
-    b = fmap(b) do x
-        adapt(adaptor, x)
-    end
-
-    binv = inv(b)
-
-    # Converter used for standard arrays.
-    axis = first(ComponentArrays.getaxes(θ))
-    nt(x) = Epimap.tonamedtuple(x, axis)
-
-    function logjoint_unconstrained(args_unconstrained::AbstractVector)
-        return logjoint_unconstrained(nt(args_unconstrained))
-    end
-    function logjoint_unconstrained(args_unconstrained::Union{NamedTuple, ComponentArray})
-        args, logjac = forward(binv, args_unconstrained)
-        return logjoint(args) + logjac
-    end
-
-    precomputed = Epimap.precompute(model)
-    logjoint(args::AbstractVector) = logjoint(nt(args))
-    function logjoint(args::Union{NamedTuple, ComponentArray})
-        return DynamicPPL.logjoint(model, SimpleVarInfo(args))
-    end
-
-    return (logjoint, logjoint_unconstrained, b, θ)
 end
 
 function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(rmap_naive)})
@@ -770,7 +785,7 @@ function Epimap.make_logjoint(model::DynamicPPL.Model{DynamicPPLUtils.evaluatort
     adaptor = Epimap.FloatMaybeAdaptor{eltype(model.args.D)}()
     θ = adapt(adaptor, ComponentArray(vi))
     # Construct the corresponding bijector.
-    b_orig = TuringUtils.optimize_bijector(
+    b_orig = TuringUtils.optimize_bijector_structure(
         Bijectors.bijector(vi; tuplify = true)
     )
     # Adapt bijector parameters to use desired `eltype`.
@@ -805,9 +820,9 @@ function Epimap.precompute(model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype
     X_cond = model.args.X_cond
 
     num_regions = size(C, 1)
-    num_times = size(C, 2)
+    num_infer = size(C, 2)
     num_cond = X_cond === nothing ? 0 : size(X_cond, 2)
-    num_infer = num_times - num_cond
+    num_times = num_infer + num_cond
 
     # Ensures that we'll be using the same ordering as the original model.
     weekly_case_variation_reindex = map(1:7) do i

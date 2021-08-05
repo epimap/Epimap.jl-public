@@ -24,10 +24,18 @@ function DynamicPPL.logjoint(model::DynamicPPL.Model)
     return logjoint
 end
 
+function DynamicPPL.logjoint(model::DynamicPPL.Model, θ::Union{NamedTuple,ComponentArray})
+    return DynamicPPL.logjoint(model, SimpleVarInfo(θ))
+end
+
 function DynamicPPL._getvalue(nt::ComponentArrays.ComponentArray, sym::Val, inds=())
     # Use `getproperty` instead of `getfield`
     value = getproperty(nt, sym)
     return DynamicPPL._getindex(value, inds)
+end
+
+function DynamicPPL.getval(vi::DynamicPPL.SimpleVarInfo{<:ComponentArray}, vn::DynamicPPL.VarName{sym}) where {sym}
+    return DynamicPPL.maybe_unwrap_view(DynamicPPL._getvalue(vi.θ, Val{sym}(), vn.indexing))
 end
 
 # Turing.jl-related
