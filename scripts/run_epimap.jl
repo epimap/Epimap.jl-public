@@ -60,7 +60,7 @@ serialize(intermediatedir("args.jls"), m.args)
 logπ, logπ_unconstrained, b, _ = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
 
-using DynamicPPL
+using DynamicPPL, Random
 _, svi = DynamicPPL.evaluate(
     m, SimpleVarInfo(),
     SamplingContext(Random.GLOBAL_RNG, SampleFromPrior(), DefaultContext())
