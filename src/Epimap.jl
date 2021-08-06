@@ -35,11 +35,16 @@ function make_logjoint(
     model::DynamicPPL.Model, ::Type{T}=Float64;
     bijector_options=TuringUtils.BijectorStructureOptions(unvectorize_univariates=true)
 ) where {T}
-    # Construct an example `VarInfo`.
-    vi = Turing.VarInfo(model)
+    # Sample using `SimpleVarInfo` once to get the parameter space.
+    svi = SimpleVarInfo(model)
+
     # Adapt parameters to use desired `eltype`.
     adaptor = FloatMaybeAdaptor{T}()
-    θ = adapt(adaptor, ComponentArray(vi))
+    θ = adapt(adaptor, ComponentArray(svi.θ))
+
+    # Construct an example `VarInfo`.
+    vi = Turing.VarInfo(model)
+
     # Construct the corresponding bijector.
     b_orig = TuringUtils.optimize_bijector_structure(
         Bijectors.bijector(vi, bijector_options);
