@@ -639,7 +639,7 @@ end
     # end
     # TODO: Write using Tullio.
     expected_positive_tests_weekly = mapreduce(
-        x -> mean(x, dims=2),
+        x -> sum(x, dims=2),
         hcat,
         (@views(expected_positive_tests[:, i:i + 6]) for i = 1:7:size(expected_positive_tests, 2))
     )
