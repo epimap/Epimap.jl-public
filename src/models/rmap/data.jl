@@ -9,7 +9,8 @@ using DrWatson,
     Adapt,
     Distances,
     DocStringExtensions,
-    Dates
+    Dates,
+    StatsFuns
 
 function Base.map(f, d::Dict)
     pairs = map(f, zip(keys(d), values(d)))
@@ -24,6 +25,14 @@ function distance_from_areas(metric, areas; units = 100_000)
         hcat(area_names, D),
         vcat(["Column1"], area_names)
     )
+end
+
+function make_test_delay_profile(test_delay_days; presymptomdays=2, a=5.8, b=0.948)
+    tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
+    tmp ./= tmp[end]
+    tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
+
+    return vcat(zeros(presymptomdays), tmp)
 end
 
 # TODO: make this nicer
@@ -255,12 +264,7 @@ function setup_args(
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
 
     # Test delay (numbers taken from original code `Adp` and `Bdp`)
-    test_delay_profile = let a = 5.8, b = 0.948
-        tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
-        tmp ./= tmp[end]
-        tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
-        vcat(zeros(presymptomdays), tmp)
-    end
+    test_delay_profile = make_test_delay_profile(test_delay_days)
     @assert sum(test_delay_profile) ≈ 1.0 "test_delay_profile does not sum to 1"
 
     # Precompute conditioning X approximation
@@ -357,9 +361,11 @@ function setup_args(
     timestep = Week(1),
     num_condition_days = 30,
     condition_observations = false,
-    include_dates = false
+    include_dates = false,
+    observation_timestep = Week(1)
 ) where {T}
     days_per_step = Dates.days(timestep)
+    days_per_observation = Dates.days(observation_timestep)
 
     @unpack cases, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
 
@@ -378,10 +384,20 @@ function setup_args(
     dates_condition_str = Dates.format.(dates_condition, "yyyy-mm-dd")
     dates_model_str = Dates.format.(dates_model, "yyyy-mm-dd")
 
+    # Some counting of DAYS, not timesteps.
+    num_cond = length(dates_condition)
+    num_infer = length(dates_model)
+    num_times = num_cond + num_infer
+
+    # Sanity checking
+    @assert num_infer % days_per_step == 0 "$(num_infer) not divisible by $(days_per_step)"
+    @assert num_cond % days_per_observation == 0 "$(num_infer) not divisible by $(days_per_step)"
+
     # Debiased data.
     debiased = data.debiased
     @assert dates_model[end] in debiased[:, :mid_week] "$(dates_model[end]) is not the end of a week, please provide a different date"
-    debiased = debiased[debiased[:, :mid_week] .∈ Ref(dates_model), :]
+    # Filter the dates.
+    debiased = debiased[debiased[:, :mid_week] .∈ Ref(vcat(dates_condition, dates_model)), :]
 
     # TODO: Resolve the regions with what we have unbiased estimates for.
     area_names = areas[:, :area]
@@ -398,13 +414,18 @@ function setup_args(
     logitπ = permutedims(mapreduce(g -> g[:, :mean], hcat, by_ltla), (2, 1))
     σ_debias = permutedims(mapreduce(g -> g[:, :sd], hcat, by_ltla), (2, 1))
 
-    # Back to the usual stuff.
-    cases = Array(cases[area_mask, vcat(dates_condition_str, dates_model_str)])
+    cases = populations .* StatsFuns.logistic.(logitπ)
 
-    (num_regions, num_days) =  size(cases)
-    num_cond = size(dates_condition, 1)
-    num_infer = num_days - num_cond
-    @assert num_infer % days_per_step == 0 "$(num_infer) not divisible by $(days_per_step)"
+    # Data to be modeled. It's just easier to extract it like this than mess around
+    # with the number of steps
+    debiased_model = debiased[debiased.mid_week .∈ Ref(dates_model), :]
+    by_ltla_model = groupby(debiased_model, :ltla)
+    logitπ_model = permutedims(mapreduce(g -> g[:, :mean], hcat, by_ltla_model), (2, 1))
+    σ_debias_model = permutedims(mapreduce(g -> g[:, :sd], hcat, by_ltla_model), (2, 1))
+
+    # Test delay (numbers taken from original code `Adp` and `Bdp`)
+    test_delay_profile = make_test_delay_profile(test_delay_days)
+    @assert sum(test_delay_profile) ≈ 1.0 "test_delay_profile does not sum to 1"
 
     # Serial intervals / infection profile
     serial_intervals = serial_intervals[1:min(infection_cutoff, size(serial_intervals, 1)), :fit]
@@ -412,27 +433,25 @@ function setup_args(
     normalize!(serial_intervals, 1)
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
 
-    # Test delay (numbers taken from original code `Adp` and `Bdp`)
-    test_delay_profile = let a = 5.8, b = 0.948
-        tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
-        tmp ./= tmp[end]
-        tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
-        vcat(zeros(presymptomdays), tmp)
-    end
-    @assert sum(test_delay_profile) ≈ 1.0 "test_delay_profile does not sum to 1"
-
     # Precompute conditioning X approximation
-    X_cond = if condition_observations
-        cases[:, 1:num_cond]
-    elseif num_condition_days > 0
-        compute_X_cond(cases, test_delay_profile, num_condition_days)
-    else
-        nothing
+    @assert num_cond % days_per_observation == 0 "number of days ($(num_cond)) to condition not divisible by days per observation ($(days_per_observation)); required to compute `X_cond`"
+    X_cond = let cases_condition=repeat(cases, inner=(1, days_per_observation)) ./ days_per_observation
+        if condition_observations
+            cases_condition[:, 1:num_condition_days]
+        elseif num_condition_days > 0
+            compute_X_cond(cases_condition, test_delay_profile, num_condition_days)
+        else
+            nothing
+        end
     end
+
+    num_regions = length(area_names_common)
+    @assert size(cases, 1) == num_regions
 
     ### Spatial kernel ###
     # TODO: make it this an argument?
     centers = Array(areas[area_mask, ["longitude", "latitude"]])
+    @assert areas[area_mask, :area] == area_names_common "the filter used for `data.areas` results in incorrect area names"
     k_spatial = Matern12Kernel()
     spatial_distances = KernelFunctions.pairwise(
         KernelFunctions.Haversine(),
@@ -449,7 +468,13 @@ function setup_args(
     K_time = PDMat(map(Base.Fix1(KernelFunctions.kappa, k_time), time_distances))
 
     # Flux matrices
-    F_id = Diagonal(ones(num_regions))
+    F_id = Diagonal(ones(num_regions))    
+    @assert traffic_flux_out[area_mask, 1] == area_names_common
+    @assert names(traffic_flux_out)[1 .+ area_mask] == area_names_common
+
+    @assert traffic_flux_in[area_mask, 1] == area_names_common
+    @assert names(traffic_flux_in)[1 .+ area_mask] == area_names_common
+
     F_out = Array(traffic_flux_out[area_mask, 1 .+ area_mask])
     F_in = Array(traffic_flux_in[area_mask, 1 .+ area_mask])
 
@@ -463,8 +488,8 @@ function setup_args(
 
     # Resulting arguments
     result = (
-        logitπ = logitπ,
-        σ_debias = σ_debias,
+        logitπ = logitπ_model,
+        σ_debias = σ_debias_model,
         populations = populations,
         D = test_delay_profile,
         W = serial_intervals,
@@ -475,7 +500,8 @@ function setup_args(
         K_spatial = K_spatial,
         K_local = K_local,
         days_per_step = days_per_step,
-        X_cond = clamp.(X_cond, eps(T), Inf)
+        X_cond = clamp.(X_cond, eps(T), T(Inf)),
+        area_names = area_names_common
     )
 
     result_adapted = adapt(Epimap.FloatMaybeAdaptor{T}(), result)

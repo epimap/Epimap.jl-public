@@ -150,7 +150,11 @@ end
 
 function MCMCChainsUtils.setconverters(
     chain::MCMCChains.Chains,
-    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(Rmap.rmap_naive)}
+    model::DynamicPPL.Model{Union{
+        DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
+        DynamicPPLUtils.evaluatortype(Rmap.rmap),
+        DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
+    }}
 )
     # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
     # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
@@ -160,9 +164,7 @@ function MCMCChainsUtils.setconverters(
     X_converter_expr = quote
         X_chain -> begin
             # Interpolate the `X_cond` to avoid closing over `model`.
-            X_cond = $(model.args.X_cond)
-
-            num_regions = size(X_cond, 1)
+            num_region = $(size(model.args.X_cond, 1))
             num_iterations = length(X_chain)
 
             # Convert chain into an array.
