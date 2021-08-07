@@ -48,7 +48,8 @@ args, dates = Rmap.setup_args(
     num_steps = 15,
     timestep = Week(1),
     include_dates = true,
-    last_date = Date(2021, 05, 30)
+    last_date = Date(2021, 05, 30),
+    num_condition_days = 35 # need something that's divisible by 7
 )
 
 # With `area_names` and `dates` we can recover the data being used.
