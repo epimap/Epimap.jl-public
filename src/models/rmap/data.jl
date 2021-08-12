@@ -58,6 +58,7 @@ function load_data(
         traffic_flux_in = @RemoteFile "$(rmap_path)/uk_reverse_commute_flow.csv" dir=datadir("rmap") updates=:never
         traffic_flux_out = @RemoteFile "$(rmap_path)/uk_forward_commute_flow.csv" dir=datadir("rmap") updates=:never
         debiased = @RemoteFile "file://" * debiased_path dir=datadir("debiased") updates=:never
+        pcr_positivity = @RemoteFile "file://" * datadir("pcr_daily.csv") dir=datadir("debiased") updates=:never
     end
 
     # Download files if out of date
@@ -116,11 +117,6 @@ function load_data(
         dataframes[:distances] = distance_from_areas(metric, dataframes[:areas]; units = 100_000)
     end
 
-    # Load files
-    dataframes = map(datasets.files) do (name, remotefile)
-        (name, DataFrame(CSV.File(path(remotefile))))
-    end
-
     # Convert into `NamedTuple` because nicer to work with
     data = DrWatson.dict2ntuple(dataframes)
 
@@ -129,17 +125,17 @@ function load_data(
 
     # TODO: Make this a part of the test-suite instead.
     # Verify that they're all aligned wrt. area names.
-    # TODO: Fix the issue that `distances` aren't beign filtered appropriately.
-    # @assert (
-    #     data.areas[:, "area"] ==
-    #     data.cases[:, "Area name"] ==
-    #     data.traffic_flux_in[:, "Column1"] ==
-    #     names(data.traffic_flux_in)[2:end] ==
-    #     data.traffic_flux_out[:, "Column1"] ==
-    #     names(data.traffic_flux_out)[2:end]==
-    #     data.distances[:, "Column1"] ==
-    #     names(data.distances)[2:end]
-    # ) "something went wrong with the sorting"
+    # TODO: Fix the issue that `distances` aren't being filtered appropriately.
+    @assert (
+        data.areas[:, "area"] ==
+        data.cases[:, "Area name"] ==
+        data.traffic_flux_in[:, "Column1"] ==
+        names(data.traffic_flux_in)[2:end] ==
+        data.traffic_flux_out[:, "Column1"] ==
+        names(data.traffic_flux_out)[2:end]==
+        data.distances[:, "Column1"] ==
+        names(data.distances)[2:end]
+    ) "something went wrong with the sorting"
 
     return data
 end
@@ -391,7 +387,6 @@ function setup_args(
 
     # Sanity checking
     @assert num_infer % days_per_step == 0 "$(num_infer) not divisible by $(days_per_step)"
-    @assert num_cond % days_per_observation == 0 "$(num_infer) not divisible by $(days_per_step)"
 
     # Debiased data.
     debiased = data.debiased
@@ -407,14 +402,18 @@ function setup_args(
     @info size(area_mask)
     area_mask_debiased = findall(∈(area_names_common), area_names_debiased)
 
+    # Extract cases used for `X_cond`.
+    cases = Array(
+        cases[in(area_names_common).(data.cases[:, "Area name"]), vcat(dates_condition_str, dates_model_str)]
+    )
+    @assert size(cases, 1) == length(area_names_common)
+
     # Extract wanted information from filtered `debiased`.
     debiased = debiased[debiased[:, :ltla] .∈ Ref(area_names_common), :]
     populations = combine(groupby(debiased, :ltla), :M => first => :population)[:, :population]
     by_ltla = groupby(debiased, :ltla)
     logitπ = permutedims(mapreduce(g -> g[:, :mean], hcat, by_ltla), (2, 1))
     σ_debias = permutedims(mapreduce(g -> g[:, :sd], hcat, by_ltla), (2, 1))
-
-    cases = populations .* StatsFuns.logistic.(logitπ)
 
     # Data to be modeled. It's just easier to extract it like this than mess around
     # with the number of steps
@@ -433,16 +432,25 @@ function setup_args(
     normalize!(serial_intervals, 1)
     @assert sum(serial_intervals) ≈ 1.0 "truncated serial_intervals does not sum to 1"
 
+    # PCR positivity profile
+    pcr_positivity_profile = vec(Array(data.pcr_positivity))
+
+    # Test delay (numbers taken from original code `Adp` and `Bdp`)
+    test_delay_profile = let a = 5.8, b = 0.948
+        tmp = cdf.(Gamma(a, b), 1:(test_delay_days - presymptomdays))
+        tmp ./= tmp[end]
+        tmp = tmp - vcat(zeros(1), tmp[1:end - 1])
+        vcat(zeros(presymptomdays), tmp)
+    end
+    @assert sum(test_delay_profile) ≈ 1.0 "test_delay_profile does not sum to 1"
+
     # Precompute conditioning X approximation
-    @assert num_cond % days_per_observation == 0 "number of days ($(num_cond)) to condition not divisible by days per observation ($(days_per_observation)); required to compute `X_cond`"
-    X_cond = let cases_condition=repeat(cases, inner=(1, days_per_observation)) ./ days_per_observation
-        if condition_observations
-            cases_condition[:, 1:num_condition_days]
-        elseif num_condition_days > 0
-            compute_X_cond(cases_condition, test_delay_profile, num_condition_days)
-        else
-            nothing
-        end
+    X_cond = if condition_observations
+        cases[:, 1:num_cond]
+    elseif num_condition_days > 0
+        compute_X_cond(cases, test_delay_profile, num_condition_days)
+    else
+        nothing
     end
 
     num_regions = length(area_names_common)
@@ -491,7 +499,7 @@ function setup_args(
         logitπ = logitπ_model,
         σ_debias = σ_debias_model,
         populations = populations,
-        D = test_delay_profile,
+        D = pcr_positivity_profile,
         W = serial_intervals,
         F_id = F_id,
         F_out = F_out,
