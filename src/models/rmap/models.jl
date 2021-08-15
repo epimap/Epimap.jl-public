@@ -992,21 +992,21 @@ end
 
 function MCMCChainsUtils.setconverters(
     chain::MCMCChains.Chains,
-    model::DynamicPPL.Model{Union{
+    model::DynamicPPL.Model{F}
+) where {F<:Union{
         DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
         DynamicPPLUtils.evaluatortype(Rmap.rmap),
         DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
-    }}
-)
+}}
     # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
     # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
     # though for usage in `fast_generated_quantities` and `fast_predict` we could just set
     # these to 0 as only the inferred variables are used.
 
-    X_converter_expr = quote
+    X_converter = let num_regions = size(model.args.X_cond, 1)
         X_chain -> begin
             # Interpolate the `X_cond` to avoid closing over `model`.
-            num_region = $(size(model.args.X_cond, 1))
+            num_regions = num_regions
             num_iterations = length(X_chain)
 
             # Convert chain into an array.
@@ -1014,7 +1014,6 @@ function MCMCChainsUtils.setconverters(
             return Xs
         end
     end
-    X_converter = eval(X_converter_expr)
 
     return MCMCChainsUtils.setconverters(
         chain,
