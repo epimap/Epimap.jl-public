@@ -591,10 +591,6 @@ end
 end
 
 @model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, ::Type{T}=Float64) where {T}
-    # Noise for cases
-    num_regions = size(X, 1)
-    ϕ ~ filldist(𝒩₊(T(0), T(5)), num_regions)
-
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
     expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))
