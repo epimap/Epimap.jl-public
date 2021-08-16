@@ -53,7 +53,7 @@ repo = LibGit2.GitRepo(projectdir())
 if !parsed_args["ignore-commit"]
     if getcommit(rundir) != getcommit(repo)
         print(
-            "Run came from (getcommit(rundir)) but HEAD is ",
+            "Run came from $(getcommit(rundir)) but HEAD is ",
             "currently pointing to $(getcommit(repo)); ",
             "do you want to checkout the correct branch? [y/N]: "
         )
@@ -363,6 +363,15 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
     push!(ps, p6)
 
     return plot(ps..., layout=(length(ps), 1), size=(1000, 1000))
+end
+
+let area_with_most_cases = argmax(vec(sum(cases; dims=2)))
+    area_name = area_names[area_with_most_cases]
+    plot_posterior_predictive(dates.model, area_name=area_name)
+    savefig(figdir("$(area_name)-posterior-predictive.pdf"))
+
+    plot_posterior_predictive(dates.model, area_name=area_name, start_idx=8)
+    savefig(figdir("$(area_name)-posterior-predictive-ignore-first-week.pdf"))
 end
 
 let area_name = "Cambridge"
