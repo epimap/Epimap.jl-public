@@ -523,6 +523,46 @@ Model latent infections `X` using a regional flux model.
     return X_full
 end
 
+@model function RegionalFluxWithoutCond(
+    F_id, F_in, F_out,
+    W, R, X_cond_means,
+    ::Type{T} = Float64;
+    days_per_step = 1,
+    σ_ξ = missing,
+    ξ = missing,
+    β = missing,
+    ρₜ = missing,
+    ψ = missing,
+) where {T}
+    num_steps = size(R, 2)
+    num_cond = size(X_cond_means, 2)
+    num_regions = size(F_in, 1)
+
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
+
+    # Compute the flux matrix
+    F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
+
+    # Daily latent infections.
+    num_infer = size(F, 3)
+    @assert num_infer % days_per_step == 0
+
+    # Initial latent infections.
+    # NOTE: We add a small constant to the mean to ensure that
+    # 0 mean won't cause any issues.
+    X_cond ~ arraydist(truncated.(Normal.(T(1e-6) .+ X_cond_means, T(10)), T(0), T(Inf)))
+
+    # Latent infections for which we have observations.
+    X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
+    X_full = hcat(X_cond, X)
+
+    # Compute the logdensity
+    Turing.@addlogprob! logjoint_X(F, X_full, W, R, ξ, ψ, num_cond, days_per_step)
+
+    return X_full
+end
+
+
 """
     rmap(args...; kwargs...)
 
@@ -566,19 +606,25 @@ end
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
     days_per_step = 7,
-    X_cond = nothing,
+    X_cond_means = nothing,
     ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing
 ) where {T}
-    num_cond = size(X_cond, 2)
+    num_cond = size(X_cond_means, 2)
 
     # GP-model for R-value.
     @submodel R = SpatioTemporalGP(K_spatial, K_local, K_time, T; σ_spatial, σ_local, ρ_spatial, ρ_time)
 
     # Latent infections.
-    @submodel X = RegionalFlux(F_id, F_in, F_out, W, R, X_cond, T; days_per_step, σ_ξ)
+    @submodel X = RegionalFluxWithoutCond(
+        F_id, F_in, F_out,
+        W, R,
+        X_cond_means,
+        T;
+        days_per_step, σ_ξ
+    )
 
     # Likelihood.
     @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, T)
@@ -591,10 +637,6 @@ end
 end
 
 @model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, ::Type{T}=Float64) where {T}
-    # Noise for cases
-    num_regions = size(X, 1)
-    ϕ ~ filldist(𝒩₊(T(0), T(5)), num_regions)
-
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
     expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))

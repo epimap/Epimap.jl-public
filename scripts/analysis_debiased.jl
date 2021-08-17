@@ -89,6 +89,8 @@ using StatsPlots
 using StatsFuns
 using NNlib
 
+pyplot()
+
 modeldef = eval(Meta.parse(parsed_args["model"]))
 
 # Some useful methods for resolving the paths.
@@ -185,8 +187,11 @@ print("Visualizing some traces...")
 plot(chain[[:σ_local, :σ_spatial]])
 savefig(figdir("traceplot-gp-parameters.pdf"))
 
-plot(MCMCChains.group(chain, :ρ))
+plot(MCMCChains.group(chain, :ρₜ))
 savefig(figdir("traceplot-rho.pdf"))
+
+plot(chain[[:β, :ψ, :μ_ar, :σ_ar, :α_pre]])
+savefig(figdir("traceplot-univariate-parameters.pdf"))
 
 println("DONE!")
 
@@ -281,11 +286,12 @@ print("Computing generated quantities...")
 results = fast_generated_quantities(m, parameters[1:thin:end]);
 Rs = extract_results(results, :R)
 Xs = extract_results(results, :X)
-Zs = if haskey(results[1], :Z)
-    extract_results(results, :Z)
+Zs, expected_prevalence = if haskey(results[1], :Z)
+    extract_results(results, :Z), extract_results(results, :expected_prevalence)
 else
-    let args = m.args, ρₜs = Array(MCMCChains.group(chain, :ρₜ)), βs = vec(chain[:β])
+    let args = m.args, ρₜs = Array(MCMCChains.group(chain, :ρₜ)), βs = vec(chain[:β]), D = m.args.D
         Z̃s = similar(Xs)
+        expected_prevalence = similar(Xs)
         for (i, res) in enumerate(results)
             ρₜ = ρₜs[i, :]
             β = βs[i, :]
@@ -294,25 +300,29 @@ else
             F = Rmap.compute_flux(args.F_id, args.F_in, args.F_out, β, ρₜ, args.days_per_step)
             Z = Epimap.conv(X_full, args.W)[:, num_cond:end - 1]
             Z̃s[:, :, i] = NNlib.batched_vec(F, Z)
+
+            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond:end - 1]
         end
 
-        Z̃s
+        Z̃s, expected_prevalence
     end
 end
+
 # NOTE: It's a bit unclear whether we should be computing the R-value
 # from `Xs` and `Zs` or directly from the inferred `π_pred`.
 Rs_computed = compute_R(Xs, Zs)
-# Rs_computed = repeat(
-#     permutedims(
-#         cat(
-#             ones(size(π_pred)[1:2]..., 1),
-#             π_pred[:, :, 2:end] ./ π_pred[:, :, 1:end-1];
-#             dims=3
-#         ),
-#         (2, 3, 1)
-#     ),
-#     inner=(1, 7, 1)
-# )
+Rs_computed_daily = Xs ./ Zs
+Rs_computed_prevalence = repeat(
+    permutedims(
+        cat(
+            ones(size(π_pred)[1:2]..., 1),
+            π_pred[:, :, 2:end] ./ π_pred[:, :, 1:end-1];
+            dims=3
+        ),
+        (2, 3, 1)
+    ),
+    inner=(1, 7, 1)
+)
 
 println("DONE!")
 
@@ -329,8 +339,11 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
     # Plot!
     ps = []
 
-    p1 = plot(ts, prevalence_true_daily[area, start_idx:end], color=:black, label="true")
-    plot!(p1, ts, transpose(prevalence_pred_daily[:, area, start_idx:end]), label="", alpha=0.1, color=:blue)
+    num_samples = size(prevalence_pred_daily, 1)
+
+    p1 = plot()
+    plot!(p1, ts, transpose(prevalence_pred_daily[:, area, start_idx:end]), label="", alpha= 1 / num_samples^(3/5), color=:blue)
+    plot!(p1, ts, prevalence_true_daily[area, start_idx:end], color=:black, label="true")
     ylabel!("Prevalence", labelfontsize=10)
     push!(ps, p1)
     title!(area_name)
@@ -342,8 +355,18 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
 
     p3 = plot()
     plot_density_wrt_time!(p3, ts, eachrow(Rs_computed[area, start_idx:end, :]))
-    ylabel!("Rt (computed)", labelfontsize=10)
+    ylabel!("Rt (i.p.)", labelfontsize=10)
     push!(ps, p3)
+
+    p8 = plot()
+    plot_density_wrt_time!(p8, ts, eachrow(Rs_computed_daily[area, start_idx:end, :]))
+    ylabel!("Rt daily (i.p.)", labelfontsize=10)
+    push!(ps, p8)
+
+    p7 = plot()
+    plot_density_wrt_time!(p7, ts, eachrow(Rs_computed_prevalence[area, start_idx:end, :]))
+    ylabel!("Rt (prev.)", labelfontsize=10)
+    push!(ps, p7)
 
     p4 = plot()
     plot!(p4, ts, repeat(logitπ_true[area, :], inner=7)[start_idx:end], color=:black, label="")
@@ -359,10 +382,15 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
 
     p6 = plot()
     plot_density_wrt_time!(p6, ts, eachrow(Zs[area, start_idx:end, :]))
-    ylabel!("Zₜ", labelfontsize=10)
+    ylabel!("Z̃ₜ", labelfontsize=10)
     push!(ps, p6)
 
-    return plot(ps..., layout=(length(ps), 1), size=(1000, 1000))
+    p6 = plot()
+    plot_density_wrt_time!(p6, ts, eachrow(expected_prevalence[area, start_idx:end, :]))
+    ylabel!("Expected prevalence", labelfontsize=10)
+    push!(ps, p6)
+
+    return plot(ps..., layout=(length(ps), 1), size=(1000, length(ps) * 200))
 end
 
 let area_with_most_cases = argmax(vec(sum(cases; dims=2)))
