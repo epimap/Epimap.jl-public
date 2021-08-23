@@ -866,7 +866,8 @@ function DynamicPPL.logjoint(
     precomputed,
     args
 )
-    return DynamicPPL.logjoint(model, precomputed, args, Val{keys(args)}())
+    new_args = args(DynamicPPL.getvalue_nested(model.context), args)
+    return DynamicPPL.logjoint(model, precomputed, new_args, Val{keys(new_args)}())
 end
 
 @generated function DynamicPPL.logjoint(
