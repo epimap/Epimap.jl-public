@@ -610,7 +610,9 @@ end
     ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing
+    σ_ξ = missing,
+    β = missing,
+    ρₜ = missing,
 ) where {T}
     num_cond = size(X_cond_means, 2)
 
