@@ -1037,9 +1037,8 @@ function MCMCChainsUtils.setconverters(
     chain::MCMCChains.Chains,
     model::DynamicPPL.Model{F}
 ) where {F<:Union{
-        DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
-        DynamicPPLUtils.evaluatortype(Rmap.rmap),
-        DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
+    DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
+    DynamicPPLUtils.evaluatortype(Rmap.rmap),
 }}
     # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
     # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
