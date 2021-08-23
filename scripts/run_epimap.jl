@@ -6,7 +6,7 @@ using Adapt
 using TuringCallbacks
 
 using DynamicPPL, Random, ComponentArrays
-Random.seed!(43)
+Random.seed!(1)
 
 using Serialization, DrWatson, Dates
 
@@ -58,7 +58,11 @@ serialize(intermediatedir("area_names.jls"), area_names)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
-m = model_def(args...; ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1), ρₜ = ones(T, 15), β = 0.0)
+m = model_def(
+    args...;
+    ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1),
+    # ρₜ = ones(T, 15), β = 0.0,
+)
 serialize(intermediatedir("args.jls"), m.args)
 
 logπ, logπ_unconstrained, b, _ = Epimap.make_logjoint(m);
