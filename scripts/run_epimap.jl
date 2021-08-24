@@ -6,7 +6,7 @@ using Adapt
 using TuringCallbacks
 
 using DynamicPPL, Random, ComponentArrays
-Random.seed!(2)
+Random.seed!(3)
 
 using Serialization, DrWatson, Dates
 
