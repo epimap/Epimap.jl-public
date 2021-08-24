@@ -656,7 +656,7 @@ end
     )
 
     # Compute proportions.
-    expected_weekly_proportions = expected_positive_tests_weekly ./ populations
+    expected_weekly_proportions = clamp.(expected_positive_tests_weekly ./ populations, zero(T), one(T))
     # Observe.
     if logitπ === missing
         logitπ ~ arraydist(Normal.(StatsFuns.logit.(expected_weekly_proportions), σ_debias))
