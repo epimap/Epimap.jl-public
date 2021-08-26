@@ -610,7 +610,9 @@ end
     ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
-    σ_ξ = missing
+    σ_ξ = missing,
+    β = missing,
+    ρₜ = missing,
 ) where {T}
     num_cond = size(X_cond_means, 2)
 
@@ -654,7 +656,7 @@ end
     )
 
     # Compute proportions.
-    expected_weekly_proportions = expected_positive_tests_weekly ./ populations
+    expected_weekly_proportions = clamp.(expected_positive_tests_weekly ./ populations, zero(T), one(T))
     # Observe.
     if logitπ === missing
         logitπ ~ arraydist(Normal.(StatsFuns.logit.(expected_weekly_proportions), σ_debias))
@@ -1036,9 +1038,8 @@ function MCMCChainsUtils.setconverters(
     chain::MCMCChains.Chains,
     model::DynamicPPL.Model{F}
 ) where {F<:Union{
-        DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
-        DynamicPPLUtils.evaluatortype(Rmap.rmap),
-        DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
+    DynamicPPLUtils.evaluatortype(Rmap.rmap_naive),
+    DynamicPPLUtils.evaluatortype(Rmap.rmap),
 }}
     # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
     # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
@@ -1047,8 +1048,6 @@ function MCMCChainsUtils.setconverters(
 
     X_converter = let num_regions = size(model.args.X_cond, 1)
         X_chain -> begin
-            # Interpolate the `X_cond` to avoid closing over `model`.
-            num_regions = num_regions
             num_iterations = length(X_chain)
 
             # Convert chain into an array.
@@ -1059,7 +1058,42 @@ function MCMCChainsUtils.setconverters(
 
     return MCMCChainsUtils.setconverters(
         chain,
-        # `eval` and make an `Expr` so we can interpolate constants, e.g. `size(m.args.C, 1)`.
         X=X_converter
+    );
+end
+
+function MCMCChainsUtils.setconverters(
+    chain::MCMCChains.Chains,
+    model::DynamicPPL.Model{DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)}
+)
+    # In `Rmap.rmap_naive` `X` is a combination of the inferred latent infenctions and
+    # `X_cond`, hence we need to replicate this structure. Here we add back the `X_cond`
+    # though for usage in `fast_generated_quantities` and `fast_predict` we could just set
+    # these to 0 as only the inferred variables are used.
+
+    X_converter = let num_regions = size(model.args.X_cond_means, 1)
+        X_chain -> begin
+            num_iterations = length(X_chain)
+
+            # Convert chain into an array.
+            Xs = reshape(Array(X_chain), num_iterations, num_regions, :)
+            return Xs
+        end
+    end
+
+    X_cond_converter = let num_regions = size(model.args.X_cond_means, 1)
+        X_cond_chain -> begin
+            num_iterations = length(X_cond_chain)
+
+            # Convert chain into an array.
+            Xs_cond = reshape(Array(X_cond_chain), num_iterations, num_regions, :)
+            return Xs_cond
+        end
+    end
+
+    return MCMCChainsUtils.setconverters(
+        chain,
+        X=X_converter,
+        X_cond=X_cond_converter
     );
 end

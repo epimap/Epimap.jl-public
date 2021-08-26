@@ -509,7 +509,6 @@ function setup_args(
         K_local = K_local,
         days_per_step = days_per_step,
         X_cond = clamp.(X_cond, eps(T), T(Inf)),
-        area_names = area_names_common
     )
 
     result_adapted = adapt(Epimap.FloatMaybeAdaptor{T}(), result)

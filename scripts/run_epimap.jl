@@ -5,6 +5,9 @@ using Dates
 using Adapt
 using TuringCallbacks
 
+using DynamicPPL, Random, ComponentArrays
+Random.seed!(1)
+
 using Serialization, DrWatson, Dates
 
 include(scriptsdir("utils.jl"))
@@ -37,15 +40,17 @@ data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
 area_names = data.areas[:, :area]
 @info "Doing inference for $(length(area_names)) regions."
 
-const T = Float32
-const model_def = Rmap.rmap_naive
+const T = Float64
+const model_def = Rmap.rmap_debiased
 
 # Construct the model arguments from data
 args, dates = Rmap.setup_args(
     model_def, data, T;
     num_steps = 15,
     timestep = Week(1),
-    include_dates = true
+    include_dates = true,
+    last_date = Date(2021, 02, 07),
+    num_condition_days = 35 # need something that's divisible by 7
 )
 
 # With `area_names` and `dates` we can recover the data being used.
@@ -53,11 +58,21 @@ serialize(intermediatedir("area_names.jls"), area_names)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
-m = model_def(args...; ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1));
+m = model_def(
+    args...;
+    ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1),
+    # ρₜ = ones(T, 15), β = 0.0,
+)
 serialize(intermediatedir("args.jls"), m.args)
 
-logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
+logπ, logπ_unconstrained, b, _ = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
+
+_, svi = DynamicPPL.evaluate(
+    m, SimpleVarInfo(),
+    SamplingContext(Random.GLOBAL_RNG, SampleFromPrior(), DefaultContext())
+)
+θ_init = ComponentArray(svi.θ)
 
 # Give it a try
 logπ(θ_init)
@@ -99,8 +114,8 @@ sampler = AdvancedHMC.HMCSampler(κ, metric, adaptor);
 model = AdvancedHMC.DifferentiableDensityModel(hamiltonian.ℓπ, hamiltonian.∂ℓπ∂θ);
 
 # Parameters
-nadapts = 1_000;
-nsamples = 1_000;
+nadapts = 5_00;
+nsamples = 5_00;
 
 # Callback to use for progress-tracking.
 cb1 = AdvancedHMC.HMCProgressCallback(nadapts + nsamples, progress = true, verbose = false)
