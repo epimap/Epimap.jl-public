@@ -64,6 +64,7 @@ m = model_def(
     # ρₜ = ones(T, 15), β = 0.0,
 )
 serialize(intermediatedir("args.jls"), m.args)
+serialize(intermediatedir("model.jls"), m)
 
 logπ, logπ_unconstrained, b, _ = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
