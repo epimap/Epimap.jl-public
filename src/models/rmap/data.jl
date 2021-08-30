@@ -638,7 +638,7 @@ function filter_areas_by_distance(
     radius = Inf
 )
     @info "Filtering based regions which are within $radius of $(main_areas)"
-    @unpack cases, distances, areas, serial_intervals, traffic_flux_in, traffic_flux_out = data
+    @unpack cases, distances, areas, serial_intervals, traffic_flux_in, traffic_flux_out, debiased = data
     main_indices = findall(∈(main_areas), areas[:, :area])
 
     # Find the nearest neighbors
@@ -663,12 +663,16 @@ function filter_areas_by_distance(
     # Extract the names
     names_to_include = areas[indices_to_include, :area]
 
+    # Filter debiased data based on the area names.
+    debiased_filtered = debiased[debiased.ltla .∈ Ref(names_to_include), :]
+
     new_data = (
         areas = areas[indices_to_include, :],
         cases = cases[indices_to_include, :],
         distances = distances[indices_to_include, vcat("Column1", names_to_include)],
         traffic_flux_in = traffic_flux_in[indices_to_include, vcat("Column1", names_to_include)],
         traffic_flux_out = traffic_flux_out[indices_to_include, vcat("Column1", names_to_include)],
+        debiased = debiased_filtered,
         area_names = names_to_include
     )
 
