@@ -37,6 +37,14 @@ mkpath(intermediatedir())
 # const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "epimap-data", "processed_data")
 const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap", "data")
 data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
+
+# Filter out areas for which we don'do not have unbiased estimates for.
+area_names_original = data.areas.area;
+area_names_debiased = data.debiased.ltla;
+area_names = intersect(area_names_original, area_names_debiased);
+
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+
 area_names = data.areas[:, :area]
 @info "Doing inference for $(length(area_names)) regions."
 
@@ -49,8 +57,7 @@ args, dates = Rmap.setup_args(
     num_steps = 15,
     timestep = Week(1),
     include_dates = true,
-    last_date = Date(2021, 02, 07),
-    num_condition_days = 35 # need something that's divisible by 7
+    last_date = Date(2021, 02, 07)
 )
 
 # With `area_names` and `dates` we can recover the data being used.
@@ -66,14 +73,8 @@ m = model_def(
 serialize(intermediatedir("args.jls"), m.args)
 serialize(intermediatedir("model.jls"), m)
 
-logπ, logπ_unconstrained, b, _ = Epimap.make_logjoint(m);
+logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 const b⁻¹ = inv(b)
-
-_, svi = DynamicPPL.evaluate(
-    m, SimpleVarInfo(),
-    SamplingContext(Random.GLOBAL_RNG, SampleFromPrior(), DefaultContext())
-)
-θ_init = ComponentArray(svi.θ)
 
 # Give it a try
 logπ(θ_init)
