@@ -514,7 +514,18 @@ Model latent infections `X` using a regional flux model.
     num_infer = size(F, 3)
     @assert num_infer % days_per_step == 0
 
-    X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
+    # NOTE: Apparently AD-ing through `filldist` for large dimensions is bad.
+    # So we're just going to ignore the log-computation (it's 0 for `Flat`) in the
+    # case where we are evaluating the logjoint and extract from `__varinfo__`.
+    # This brought us ~400ms/grad → ~200ms/grad for the "standard" setup.
+    if (
+        (Epimap.issampling(__context__) && DynamicPPL.contextual_isassumption(__context__, @varname(X_cond))) ||
+        !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
+    )
+        X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
+    else
+        X = __varinfo__.θ.X
+    end
     X_full = hcat(X_cond, X)
 
     # Compute the logdensity
@@ -704,6 +715,7 @@ function compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step = 1)
     # Tullio.jl doesn't seem to work nicely with `Diagonal`.
     F_id_ = F_id isa Diagonal ? Matrix(F_id) : F_id
 
+    # NOTE: This is a significant bottleneck in the gradient computation.
     @tullio F[i, j, t] := oneminusρₜ[t] * F_id_[i, j] + ρₜ[t] * F_cross[i, j]
 
     # # NOTE: Doesn't seem faster than the above code.
