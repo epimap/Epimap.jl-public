@@ -1,5 +1,6 @@
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DynamicPPL = "366bfd00-2699-11ea-058f-f148b4cae6d8"
 Epimap = "afe58593-66b7-4c50-a53b-04432eb9ffe9"
 TuringUtils = "5eca0922-168d-4ac7-867c-11261f9b792b"

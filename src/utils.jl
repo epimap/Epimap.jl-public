@@ -55,3 +55,8 @@ using ForwardDiff.jl/ReverseDiff.jl/Tracker.jl.
 
     return :(NamedTuple{$names}($vals))
 end
+
+issampling(context::DynamicPPL.AbstractContext) = issampling(DynamicPPL.NodeTrait(issampling, context), context)
+issampling(::DynamicPPL.SamplingContext) = true
+issampling(::DynamicPPL.IsLeaf, context) = false
+issampling(::DynamicPPL.IsParent, context) = issampling(DynamicPPL.childcontext(context))

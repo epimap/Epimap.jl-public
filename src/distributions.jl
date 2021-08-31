@@ -69,14 +69,14 @@ Hence, the resulting map is `(μ, ϕ) ↦ NegativeBinomial(ϕ, 1 / (1 + μ / ϕ)
 [1] https://reference.wolfram.com/language/ref/NegativeBinomialDistribution.html
 [2] https://mc-stan.org/docs/2_20/functions-reference/nbalt.html
 """
-function NegativeBinomial2(μ, ϕ)
+function NegativeBinomial2(μ, ϕ; kwargs...)
     p = 1 / (1 + μ / ϕ)
     r = ϕ
 
-    return NegativeBinomial(r, p)
+    return NegativeBinomial(r, p; kwargs...)
 end
 
-NegativeBinomial3(μ, ϕ) = NegativeBinomial2(μ, μ / ϕ)
+NegativeBinomial3(μ, ϕ; kwargs...) = NegativeBinomial2(μ, μ / ϕ; kwargs...)
 
 @inline nbinomlogpdf3(μ, ϕ, k) = nbinomlogpdf2(μ, μ / ϕ, k)
 @inline function nbinomlogpdf2(μ, ϕ, k)
@@ -120,10 +120,10 @@ Mean-variance-coefficient parameterization of `Gamma`.
 ## References
 - https://www.rdocumentation.org/packages/EnvStats/versions/2.3.1/topics/GammaAlt
 """
-function GammaMeanCv(mean, cv)
+function GammaMeanCv(mean, cv; kwargs...)
     k = cv^(-2)
     θ = mean / k
-    return Gamma(k, θ)
+    return Gamma(k, θ; kwargs...)
 end
 
 
