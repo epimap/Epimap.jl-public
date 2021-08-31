@@ -402,11 +402,11 @@ version = "2.2.1"
 
 [[DynamicPPL]]
 deps = ["AbstractMCMC", "AbstractPPL", "BangBang", "Bijectors", "ChainRulesCore", "Distributions", "MacroTools", "Random", "Setfield", "ZygoteRules"]
-git-tree-sha1 = "198578527ae3cc016a486fd9106bcb64878b1dd5"
-repo-rev = "tor/simple-varinfo-v2"
+git-tree-sha1 = "5a9e839b9452460a02ebb62d23f93da35666d949"
+repo-rev = "tor/simple-varinfo-v2-backup"
 repo-url = "https://github.com/TuringLang/DynamicPPL.jl"
 uuid = "366bfd00-2699-11ea-058f-f148b4cae6d8"
-version = "0.14.1"
+version = "0.14.2"
 
 [[EarCut_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
