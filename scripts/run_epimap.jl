@@ -39,13 +39,13 @@ const DATADIR = "file://" * joinpath(ENV["HOME"], "Projects", "private", "Rmap",
 data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
 
 # Filter out areas for which we don'do not have unbiased estimates for.
+# NOTE: This is also currently done in `Rmap.setup_args` but we want to
+# save the `area_names` and so we just perform the filtering here too.
 area_names_original = data.areas.area;
 area_names_debiased = data.debiased.ltla;
 area_names = intersect(area_names_original, area_names_debiased);
 
 data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
-
-area_names = data.areas[:, :area]
 @info "Doing inference for $(length(area_names)) regions."
 
 const T = Float64
