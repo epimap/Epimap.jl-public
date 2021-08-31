@@ -518,10 +518,7 @@ Model latent infections `X` using a regional flux model.
     # So we're just going to ignore the log-computation (it's 0 for `Flat`) in the
     # case where we are evaluating the logjoint and extract from `__varinfo__`.
     # This brought us ~400ms/grad → ~200ms/grad for the "standard" setup.
-    if (
-        (Epimap.issampling(__context__) && DynamicPPL.contextual_isassumption(__context__, @varname(X_cond))) ||
-        !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
-    )
+    if Epimap.issampling(__context__) || !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
         X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
     else
         X = __varinfo__.θ.X
@@ -565,10 +562,7 @@ end
     # 1. Evaluating, not sampling, and
     # 2. we're working with a `SimpleVarInfo` which supports extraction of the value.
     # This brought us ~1200ms/grad → ~400ms/grad for the "standard" setup.
-    if (
-        (Epimap.issampling(__context__) && DynamicPPL.contextual_isassumption(__context__, @varname(X_cond))) ||
-        !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
-    )
+    if Epimap.issampling(__context__) || !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
         X_cond ~ arraydist(truncated.(Normal.(T(1e-6) .+ X_cond_means, T(10)), T(0), T(Inf)))
     else
         # With Zygote.jl:
@@ -584,10 +578,7 @@ end
     # So we're just going to ignore the log-computation (it's 0 for `Flat`) in the
     # case where we are evaluating the logjoint and extract from `__varinfo__`.
     # This brought us ~400ms/grad → ~200ms/grad for the "standard" setup.
-    if (
-        (Epimap.issampling(__context__) && DynamicPPL.contextual_isassumption(__context__, @varname(X_cond))) ||
-        !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
-    )
+    if Epimap.issampling(__context__) || !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
         X ~ filldist(FlatPos(zero(T)), num_regions, num_infer)
     else
         X = __varinfo__.θ.X
