@@ -378,7 +378,10 @@ function setup_args(
 
     # Debiased data.
     debiased = data.debiased
-    @assert dates_model[end] in debiased[:, :mid_week] "$(dates_model[end]) is not the end of a week, please provide a different date"
+    @assert dayofweek(dates_model[1]) == 4 "First date modeled $(dates_model[end]) is not a Thursday"
+    @assert dayofweek(dates_model[end]) == 3 "Last date modeled $(dates_model[end]) is not a Wednesday"
+    @assert (dates_model[1] + Day(3)) in debiased[:, :mid_week] "First date modeled $(dates_model[end]) is not in the debiased dataset"
+    @assert (dates_model[end] - Day(3)) in debiased[:, :mid_week] "Last date modeled $(dates_model[end]) is not in the debiased dataset"
     # Filter the dates.
     debiased = debiased[debiased[:, :mid_week] .∈ Ref(vcat(dates_condition, dates_model)), :]
 
