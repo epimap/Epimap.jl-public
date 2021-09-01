@@ -110,14 +110,14 @@ adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(T(0.8), inte
 
 # Set-up for AbstractMCMC.
 import AdvancedHMC: AbstractMCMC
-rng = Turing.Random.MersenneTwister(43);
+rng = Turing.Random.GLOBAL_RNG;
 
 sampler = AdvancedHMC.HMCSampler(κ, metric, adaptor);
 model = AdvancedHMC.DifferentiableDensityModel(hamiltonian.ℓπ, hamiltonian.∂ℓπ∂θ);
 
 # Parameters
-nadapts = 5_00;
-nsamples = 5_00;
+nadapts = 1_000;
+nsamples = 1_000;
 
 # Callback to use for progress-tracking.
 cb1 = AdvancedHMC.HMCProgressCallback(nadapts + nsamples, progress = true, verbose = false)

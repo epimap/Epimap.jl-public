@@ -35,7 +35,7 @@ function DynamicPPL._getvalue(nt::ComponentArrays.ComponentArray, sym::Val, inds
 end
 
 function DynamicPPL.getval(vi::DynamicPPL.SimpleVarInfo{<:ComponentArray}, vn::DynamicPPL.VarName{sym}) where {sym}
-    return DynamicPPL.maybe_unwrap_view(DynamicPPL._getvalue(vi.θ, Val{sym}(), vn.indexing))
+    return DynamicPPL._getvalue(vi.θ, Val{sym}(), vn.indexing)
 end
 
 # Turing.jl-related
