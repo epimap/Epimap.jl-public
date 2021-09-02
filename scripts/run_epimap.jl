@@ -171,7 +171,7 @@ end
 states = [state];
 
 @info "Adapting!"
-@cleanbreak for i = 1:nadapts
+@cleanbreak for state.i < nadapts
     global transition, state
 
     # Step
@@ -181,7 +181,7 @@ states = [state];
     cb1(rng, model, sampler, transition, state, state.i; it.kwargs...)
 
     # Save some of the states just for fun
-    if i % 200 == 0
+    if state.i % 200 == 0
         push!(states, state)
     end
     
@@ -202,7 +202,7 @@ serialize(intermediatedir("kwargs_adaptation.jls"), it.kwargs)
 
 # Sample!
 @info "Sampling!"
-@cleanbreak for i = 1:nsamples
+@cleanbreak while state.i < nadapts + nsamples
     global transition, state
 
     # Step
@@ -212,7 +212,7 @@ serialize(intermediatedir("kwargs_adaptation.jls"), it.kwargs)
     cb1(rng, model, sampler, transition, state, state.i; it.kwargs...)
 
     # Save some of the states just for fun
-    if i % 200 == 0
+    if state.i % 200 == 0
         push!(states, state)
     end
     
