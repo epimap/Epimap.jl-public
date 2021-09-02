@@ -69,44 +69,31 @@ mkpath(outdir())
 
 println("All outputs of this script can be found in $(outdir())")
 
-# Setup
-data = Rmap.load_data();
-
 # Run-related information.
 dates = deserialize(intermediatedir("dates.jls"))
 args = deserialize(intermediatedir("args.jls"))
+area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
+
+# Setup
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+verbose && @info "Working with $(length(area_names)) regions."
 
 # Some useful constants.
 num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means, 2)
 num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
-# Need to resolve the names.
-debiased = data.debiased
-area_names_all = deserialize(intermediatedir("area_names.jls"))
-area_names_debiased = unique(debiased[:, :ltla])
-area_names = intersect(area_names_all, area_names_debiased)
-
 # Useful to compare against recorded cases.
-cases = data.cases
-cases = let
-    row_mask = cases[:, "Area name"] .∈ Ref(area_names)
+cases = let cases = data.cases
     col_mask = names(cases) .∈ Ref(Dates.format.(dates.model, "yyyy-mm-dd"))
-    cases[row_mask, col_mask]
+    Array(cases[:, col_mask])
 end
-cases = Array(cases)
 
 # Instantiate model.
-m = if "model.jls" ∈ readdir(intermediatedir())
-    @info "Loading model from $(intermediatedir())"
-    _m = deserialize(intermediatedir("model.jls"))
-    # Due to limitations of serialization we need to ensure that we're still
-    # working with the correct evaluator.
-    # @assert typeof(_m.f) == DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
-    _m
-end;
-@assert m.name == :rmap_debiased "model is not `Rmap.rmap_debiased`"
+@info "Loading model from $(intermediatedir())"
+m = deserialize(intermediatedir("model.jls"));
+@assert m.name == :rmap "model is not `Rmap.rmap`"
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 binv = inv(b);
 var_info = DynamicPPL.VarInfo(m);
@@ -171,22 +158,11 @@ predictions = TuringUtils.fast_predict(m_predict, parameters[1:thin:end])
 
 println("DONE!")
 
-# TODO: Generalize.
-logitπ_true = m.args.logitπ
-π_true = StatsFuns.logistic.(logitπ_true)
-logitπ_pred = reshape(Array(predictions), length(predictions), num_regions, :)
-π_pred = StatsFuns.logistic.(logitπ_pred)
-π_pred_daily = repeat(π_pred, inner=(1, 1, 7))
-
 # Compute prediction for each weeky by repeating the prevalence across the week
 # and then divinding
-prevalence_true = π_true .* args.populations
-prevalence_true_daily = repeat(prevalence_true, inner=(1, 7))
-prevalence_pred = π_pred .* reshape(args.populations, 1, :, 1)
-prevalence_pred_daily = repeat(
-    prevalence_pred,
-    inner=(1, 1, 7)
-)
+C_true = m.args.C
+C_pred = reshape(Array(predictions), length(predictions), num_regions, :)
+C_pred = permutedims(C_pred, (2, 3, 1))
 
 function plot_density_wrt_time(ts, xs; Δ=0.005, lb=0.025, ub=0.975, kwargs...)
     p = plot(; kwargs...)
@@ -252,28 +228,26 @@ print("Computing generated quantities...")
 
 results = fast_generated_quantities(m, parameters[1:thin:end]);
 Rs = extract_results(results, :R)
-Xs_cond = permutedims(reshape(Array(MCMCChains.group(chain, :X_cond)), length(chain), num_regions, :), (2, 3, 1))
 Xs = extract_results(results, :X)
-Zs, expected_prevalence = if haskey(results[1], :Z)
-    extract_results(results, :Z), extract_results(results, :expected_prevalence)
+Zs, expected_positive_tests = if haskey(results[1], :Z)
+    extract_results(results, :Z), extract_results(results, :expected_positive_tests)
 else
     let args = m.args, ρₜs = Array(MCMCChains.group(chain, :ρₜ)), βs = vec(chain[:β]), D = m.args.D
         Z̃s = similar(Xs)
-        expected_prevalence = similar(Xs)
+        expected_positive_tests = similar(Xs)
         for (i, res) in enumerate(results)
             ρₜ = ρₜs[i, :]
             β = βs[i, :]
-            X_cond = Xs_cond[:, :, i]
 
-            X_full = hcat(X_cond, res.X)
+            X_full = hcat(args.X_cond, res.X)
             F = Rmap.compute_flux(args.F_id, args.F_in, args.F_out, β, ρₜ, args.days_per_step)
             Z = Epimap.conv(X_full, args.W)[:, num_cond:end - 1]
             Z̃s[:, :, i] = NNlib.batched_vec(F, Z)
 
-            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond:end - 1]
+            expected_positive_tests[:, :, i] = Epimap.conv(X_full, D)[:, num_cond:end - 1]
         end
 
-        Z̃s, expected_prevalence
+        Z̃s, expected_positive_tests
     end
 end
 
@@ -281,17 +255,6 @@ end
 # from `Xs` and `Zs` or directly from the inferred `π_pred`.
 Rs_computed = compute_R(Xs, Zs)
 Rs_computed_daily = Xs ./ Zs
-Rs_computed_prevalence = repeat(
-    permutedims(
-        cat(
-            ones(size(π_pred)[1:2]..., 1),
-            π_pred[:, :, 2:end] ./ π_pred[:, :, 1:end-1];
-            dims=3
-        ),
-        (2, 3, 1)
-    ),
-    inner=(1, 7, 1)
-)
 
 println("DONE!")
 
@@ -308,12 +271,13 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
     # Plot!
     ps = []
 
-    num_samples = size(prevalence_pred_daily, 1)
+    num_samples = size(C_pred, 3)
 
     p1 = plot()
-    plot!(p1, ts, transpose(prevalence_pred_daily[:, area, start_idx:end]), label="", alpha= 1 / num_samples^(3/5), color=:blue)
-    plot!(p1, ts, prevalence_true_daily[area, start_idx:end], color=:black, label="true")
-    ylabel!("Prevalence", labelfontsize=10)
+    # plot!(p1, ts, transpose(C_pred[area, start_idx:end, :]), label="", alpha= 1 / num_samples^(3/5), color=:blue)
+    plot_density_wrt_time!(p1, ts, eachrow(C_pred[area, start_idx:end, :]))
+    plot!(p1, ts, C_true[area, start_idx:end], color=:black, label="true")
+    ylabel!("Daily cases", labelfontsize=10)
     push!(ps, p1)
     title!(area_name)
 
@@ -332,19 +296,7 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
     ylabel!("Rt daily (i.p.)", labelfontsize=10)
     push!(ps, p8)
 
-    p7 = plot()
-    plot_density_wrt_time!(p7, ts, eachrow(Rs_computed_prevalence[area, start_idx:end, :]))
-    ylabel!("Rt (prev.)", labelfontsize=10)
-    push!(ps, p7)
-
-    p4 = plot()
-    plot!(p4, ts, repeat(logitπ_true[area, :], inner=7)[start_idx:end], color=:black, label="")
-    plot_density_wrt_time!(p4, ts, eachcol(repeat(logitπ_pred[:, area, :], inner=(1, 7))[:, start_idx:end]))
-    ylabel!("logitπ", labelfontsize=10)
-    push!(ps, p4)
-
     p5 = plot()
-    plot!(ts, cases[area, start_idx:end], color=:black, label="Recorded cases")
     plot_density_wrt_time!(p5, ts, eachrow(Xs[area, start_idx:end, :]))
     ylabel!("Xₜ", labelfontsize=10)
     push!(ps, p5)
@@ -355,14 +307,14 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
     push!(ps, p6)
 
     p6 = plot()
-    plot_density_wrt_time!(p6, ts, eachrow(expected_prevalence[area, start_idx:end, :]))
-    ylabel!("Expected prevalence", labelfontsize=10)
+    plot_density_wrt_time!(p6, ts, eachrow(expected_positive_tests[area, start_idx:end, :]))
+    ylabel!("Expected positive test", labelfontsize=10)
     push!(ps, p6)
 
     return plot(ps..., layout=(length(ps), 1), size=(1000, length(ps) * 200))
 end
 
-let area_with_most_cases = argmax(vec(sum(cases; dims=2)))
+let area_with_most_cases = argmax(vec(sum(C_true; dims=2)))
     area_name = area_names[area_with_most_cases]
     plot_posterior_predictive(dates.model, area_name=area_name)
     savefig(figdir("$(area_name)-posterior-predictive.pdf"))
