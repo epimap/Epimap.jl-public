@@ -1,3 +1,5 @@
+using ArgParse, DrWatson
+
 using Pkg: Pkg
 using LibGit2: LibGit2
 """
@@ -10,6 +12,52 @@ function pkgversion(m::Module)
     return Pkg.TOML.parsefile(projecttoml_path)["version"]
 end
 
+"""
+    @trynumerical f(x)
+    @trynumerical max_tries f(x)
+
+Attempts to evaluate `f(x)` until either
+1. `f(x)` successfully evaluates,
+2. no `InexactError` is thrown, or
+3. we have attempted evaluation more than `max_tries` times.
+
+Errors other than `InexactError` will be thrown as usual.
+"""
+macro trynumerical(expr)
+    return esc(trynumerical(10, expr))
+end
+macro trynumerical(max_tries, expr)
+    return esc(trynumerical(max_tries, expr))
+end
+function trynumerical(max_tries, expr)
+    @gensym i result
+    return quote
+        local $result
+        for $i = 1:$max_tries
+            try
+                $result = $expr
+                break
+            catch e
+                if e isa $(InexactError)
+                    # Yes this is a bit weird. It avoids clashes with
+                    # namespace, e.g. there could be a `i` defined in `expr`
+                    # but still allows us to do string interpolation.
+                    let i = $i
+                        @info "Failed on attempt $i due to numerical error"
+                    end
+                    continue
+                else
+                    rethrow(e)
+                end
+            end
+        end
+        $result
+    end
+end
+
+###########################
+# Reproducibility related #
+###########################
 """
     default_name(; include_commit_id=false)
 
@@ -100,4 +148,86 @@ function available_runs(; prefix=nothing, commit=nothing, full_path=false)
     end
 
     return runs
+end
+
+#######################
+# ArgParse.jl related #
+#######################
+"""
+    add_default_args!(s::ArgParseSettings)
+
+Add generally applicable arguments to `s`.
+
+In particular, it adds the following arguments:
+- `--ignore-commit`
+- `--verbose`
+"""
+function add_default_args!(s::ArgParseSettings)
+    @add_arg_table! s begin
+        "--ignore-commit"
+        help = "If specified, no check to ensure that we're working with the correct version of the package is performed."
+        action = :store_true
+        "--verbose"
+        help = "If specified, additional info will be printed."
+    end
+    return s
+end
+
+"""
+    add_default_sampling_args!(s::ArgParseSettings)
+
+Add sampling related arguments to `s`.
+
+In particular, it adds the following arguments:
+- `--nsamples`
+- `--nadapts`
+- `--thin`
+"""
+function add_default_sampling_args!(s::ArgParseSettings)
+    @add_arg_table! s begin
+        "--nsamples"
+        help = "Number of samples to produce."
+        default = 1000
+        arg_type = Int
+        "--nadapts"
+        help = "Number of adaptation steps to take, if applicable."
+        default = 1000
+        arg_type = Int
+        "--thin"
+        help = "Thinning interval to use."
+        default = 1
+        arg_type = Int
+    end
+    return s
+end
+
+"""
+    add_sampling_postprocessing_args!(s::ArgParseSettings)
+
+Add arguments related to postprocessing of runs to `s`.
+
+In particular, it adds the following arguments:
+"""
+function add_sampling_sampling_args!(s::ArgParseSettings)
+    return s
+end
+
+"""
+    @parse_args s
+    @parse_args s _args
+
+Calls `parse_args` on `s` and `_args`, with `_args = ARGS` if `_args` is not defined.
+
+This is convenient when wanting to run a script using `include` instead of from the
+command line, for example allowing temporary halting of a long-running process to 
+save some results, and then resume.
+"""
+macro parse_args(argparsesettings, argsvar=:_args)
+    return quote
+        if !(@isdefined $argsvar)
+            $argsvar = $(esc(:ARGS))
+        end
+
+        $(ArgParse.parse_args)($argsvar, $argparsesettings)
+    end
 end

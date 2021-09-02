@@ -1,11 +1,4 @@
-using Dates, ArgParse
-
-using Printf
-using Serialization
-using ProgressMeter
-using DataFrames, CSV
-using Epimap
-using TuringUtils
+using Dates, ArgParse, DrWatson
 
 s = ArgParseSettings()
 @add_arg_table! s begin
@@ -17,57 +10,20 @@ s = ArgParseSettings()
     help = "Thinning interval used for the chain."
 end
 
-# Be explicit with `ARGS` so that we can override it in the REPL
-# and `include` if we want.
-const parsed_args = parse_args(s)
+include(scriptsdir("utils.jl"))
+parsed_args = @parse_args(s)
 
-"""
-    @trynumerical f(x)
-    @trynumerical max_tries f(x)
-
-Attempts to evaluate `f(x)` until either
-1. `f(x)` successfully evaluates,
-2. no `InexactError` is thrown, or
-3. we have attempted evaluation more than `max_tries` times.
-
-Errors other than `InexactError` will be thrown as usual.
-"""
-macro trynumerical(expr)
-    return esc(trynumerical(10, expr))
-end
-macro trynumerical(max_tries, expr)
-    return esc(trynumerical(max_tries, expr))
-end
-function trynumerical(max_tries, expr)
-    @gensym i result
-    return quote
-        local $result
-        for $i = 1:$max_tries
-            try
-                $result = $expr
-                break
-            catch e
-                if e isa $(InexactError)
-                    # Yes this is a bit weird. It avoids clashes with
-                    # namespace, e.g. there could be a `i` defined in `expr`
-                    # but still allows us to do string interpolation.
-                    let i = $i
-                        @info "Failed on attempt $i due to numerical error"
-                    end
-                    continue
-                else
-                    rethrow(e)
-                end
-            end
-        end
-        $result
-    end
-end
+using Printf
+using Serialization
+using ProgressMeter
+using DataFrames, CSV
+using Epimap
+using TuringUtils
 
 # Quantiles we're going to compute.
-const qs = [0.025, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.75, 0.80, 0.90, 0.975];
+qs = [0.025, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.75, 0.80, 0.90, 0.975];
 
-const rundir = parsed_args["rundir"]
+rundir = parsed_args["rundir"]
 intermediatedir(args...) = joinpath(rundir, args...)
 
 figdir(args...) = intermediatedir("figures", args...)
@@ -76,8 +32,8 @@ mkpath(figdir())
 outdir(args...) = intermediatedir("out", args...)
 mkpath(outdir())
 
-const data = Rmap.load_data();
-const area_names = if "areas.jls" in readdir(intermediatedir())
+data = Rmap.load_data();
+area_names = if "areas.jls" in readdir(intermediatedir())
     deserialize(intermediatedir("areas.jls"))
 else
     data.areas[:, :area]
@@ -87,7 +43,7 @@ dates = deserialize(intermediatedir("dates.jls"));
 args = deserialize(intermediatedir("args.jls"));
 samples = deserialize(intermediatedir("chain.jls"))
 
-const num_regions = size(args.C, 1);
+num_regions = size(args.C, 1);
 
 # Only look at those after warmup.
 adapt_end = findlast(samples) do t
