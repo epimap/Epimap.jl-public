@@ -21,6 +21,9 @@ add_default_args!(s)
     help = "Specifies the thinning to use for `predict`and `generated_quantities`."
     default = 1
     arg_type = Int
+    "--area"
+    help = "Additional areas to produce plots for."
+    action = :append_arg
 end
 
 parsed_args = @parse_args(s)
@@ -376,6 +379,14 @@ let area_name = "Craven"
 end
 
 for area_name in area_names[1:10]
+    plot_posterior_predictive(dates.model, area_name=area_name)
+    savefig(figdir("$(area_name)-posterior-predictive.pdf"))
+
+    plot_posterior_predictive(dates.model, area_name=area_name, start_idx=8)
+    savefig(figdir("$(area_name)-posterior-predictive-ignore-first-week.pdf"))
+end
+
+for area_name in parsed_args["area"]
     plot_posterior_predictive(dates.model, area_name=area_name)
     savefig(figdir("$(area_name)-posterior-predictive.pdf"))
 

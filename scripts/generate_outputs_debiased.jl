@@ -62,55 +62,34 @@ mkpath(outdir())
 data = Rmap.load_data();
 
 # Run-related information.
-dates = deserialize(intermediatedir("dates.jls"));
-args = deserialize(intermediatedir("args.jls"));
+dates = deserialize(intermediatedir("dates.jls"))
+args = deserialize(intermediatedir("args.jls"))
+area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
 
+# Setup
+data = Rmap.load_data();
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+verbose && @info "Working with $(length(area_names)) regions."
+
 # Some useful constants.
-num_cond = size(args.X_cond_means, 2)
-num_regions = size(args.X_cond_means, 1)
+num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means, 2)
+num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
-# Need to resolve the names.
-debiased = data.debiased
-area_names_all = deserialize(intermediatedir("area_names.jls"))
-area_names_debiased = unique(debiased[:, :ltla])
-area_names = intersect(area_names_all, area_names_debiased)
-
 # Useful to compare against recorded cases.
-cases = data.cases
-cases = let
-    row_mask = cases[:, "Area name"] .∈ Ref(area_names)
+cases = let cases = data.cases
     col_mask = names(cases) .∈ Ref(Dates.format.(dates.model, "yyyy-mm-dd"))
-    cases[row_mask, col_mask]
+    Array(cases[:, col_mask])
 end
-cases = Array(cases)
 
 # Instantiate model.
-m = if "model.jls" ∈ readdir(intermediatedir())
-    @info "Loading model from $(intermediatedir())"
-    _m = deserialize(intermediatedir("model.jls"))
-    # Due to limitations of serialization we need to ensure that we're still
-    # working with the correct evaluator.
-    # @assert typeof(_m.f) == DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
-    _m
-else
-    Rmap.rmap_debiased(
-        args.logitπ, args.σ_debias, args.populations,
-        args.D, args.W,
-        args.F_id, args.F_out, args.F_in,
-        args.K_time, args.K_spatial, args.K_local,
-        args.days_per_step, args.X_cond_means, args.T;
-        ρ_spatial=args.ρ_spatial, ρ_time=args.ρ_time,
-        σ_ξ=args.σ_ξ,
-    )
-end;
-@assert m.name == :rmap_debiased "model loaded is not `Rmap.rmap_debiased`"
-logπ, logπ_unconstrained, b, θ_init = @trynumerical Epimap.make_logjoint(m);
+@info "Loading model from $(intermediatedir())"
+m = deserialize(intermediatedir("model.jls"));
+@assert m.name == :rmap_debiased "model is not `Rmap.rmap_debiased`"
+logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 binv = inv(b);
-
-# Create example `var_info`.
-var_info = @trynumerical DynamicPPL.VarInfo(m);
+var_info = DynamicPPL.VarInfo(m);
 
 # Load the samples.
 samples = deserialize(intermediatedir("chain.jls"));
@@ -118,8 +97,7 @@ adapt_end = findlast(t -> t.stat.is_adapt, samples);
 samples_adapt = samples[1:adapt_end];
 samples = samples[adapt_end + 1:end];
 
-# Set the converters so we can use `TuringUtils.fast_predict` and
-# `TuringUtils.fast_generated_quantities` instead of `predict` and `generated_quantities`.
+# Convert into a more usual format.
 chain = AbstractMCMC.bundle_samples(samples, var_info, MCMCChains.Chains);
 chain = MCMCChainsUtils.setconverters(chain, m);
 
