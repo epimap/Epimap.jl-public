@@ -154,7 +154,7 @@ println("DONE!")
 print("Predicting...")
 
 parameters = MCMCChains.get_sections(chain, :parameters);
-m_predict = DynamicPPLUtils.replace_args(m, logitπ=missing);
+m_predict = DynamicPPLUtils.replace_args(m, C=missing);
 predictions = TuringUtils.fast_predict(m_predict, parameters[1:thin:end])
 
 println("DONE!")
