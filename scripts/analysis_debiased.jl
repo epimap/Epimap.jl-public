@@ -69,43 +69,31 @@ mkpath(outdir())
 
 println("All outputs of this script can be found in $(outdir())")
 
-# Setup
-data = Rmap.load_data();
-
 # Run-related information.
 dates = deserialize(intermediatedir("dates.jls"))
 args = deserialize(intermediatedir("args.jls"))
+area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
+
+# Setup
+data = Rmap.load_data();
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+verbose && @info "Working with $(length(area_names)) regions."
 
 # Some useful constants.
 num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means, 2)
 num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
-# Need to resolve the names.
-debiased = data.debiased
-area_names_all = deserialize(intermediatedir("area_names.jls"))
-area_names_debiased = unique(debiased[:, :ltla])
-area_names = intersect(area_names_all, area_names_debiased)
-
 # Useful to compare against recorded cases.
-cases = data.cases
-cases = let
-    row_mask = cases[:, "Area name"] .∈ Ref(area_names)
+cases = let cases = data.cases
     col_mask = names(cases) .∈ Ref(Dates.format.(dates.model, "yyyy-mm-dd"))
-    cases[row_mask, col_mask]
+    Array(cases[:, col_mask])
 end
-cases = Array(cases)
 
 # Instantiate model.
-m = if "model.jls" ∈ readdir(intermediatedir())
-    @info "Loading model from $(intermediatedir())"
-    _m = deserialize(intermediatedir("model.jls"))
-    # Due to limitations of serialization we need to ensure that we're still
-    # working with the correct evaluator.
-    # @assert typeof(_m.f) == DynamicPPLUtils.evaluatortype(Rmap.rmap_debiased)
-    _m
-end;
+@info "Loading model from $(intermediatedir())"
+m = deserialize(intermediatedir("model.jls"));
 @assert m.name == :rmap_debiased "model is not `Rmap.rmap_debiased`"
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 binv = inv(b);

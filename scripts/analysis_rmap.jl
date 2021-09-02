@@ -76,6 +76,7 @@ area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
 
 # Setup
+data = Rmap.load_data();
 data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
 verbose && @info "Working with $(length(area_names)) regions."
 
