@@ -17,7 +17,7 @@ add_default_args!(s)
     default = "Rt_50"
     "--bounds"
     help = "boundaries for the value from the dataframe"
-    default = "(0.5, 2.0)"
+    default = (0.5, 2.0)
     eval_arg = true
 end
 args = @parse_args(s)
