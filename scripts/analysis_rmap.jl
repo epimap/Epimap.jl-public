@@ -42,6 +42,8 @@ if parsed_args["list"]
     exit(0)
 end
 
+@assert !isempty(parsed_args["path"]) "no path given"
+
 # Ensure that we're using the correct version of the package.
 if !parsed_args["ignore-commit"]
     interactivate_checkout_maybe(rundir)
