@@ -670,7 +670,7 @@ end
 @model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, ::Type{T}=Float64) where {T}
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
-    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))
+    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond + 1:end], T(1e-3), T(1e7))
 
     # Accumulate the weekly cases.
     # expected_positive_tests_weekly = let tmp = expected_positive_tests
