@@ -19,7 +19,7 @@ add_default_args!(s)
     # wait until `Epimap` has compiled to do so.
     "--thin"
     help = "Specifies the thinning to use for `predict`and `generated_quantities`."
-    default = 10
+    default = 1
     arg_type = Int
 end
 
