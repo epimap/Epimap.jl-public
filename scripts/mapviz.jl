@@ -1,6 +1,9 @@
 using DrWatson, ArgParse
 
+include(scriptsdir("utils.jl"))
+
 s = ArgParseSettings()
+add_default_args!(s)
 @add_arg_table! s begin
     "input"
     help = "path to input file"
@@ -16,19 +19,11 @@ s = ArgParseSettings()
     help = "boundaries for the value from the dataframe"
     default = "(0.5, 2.0)"
     eval_arg = true
-    "--verbose"
-    help = "if specified, additional info will be printed"
-    action = :store_true
 end
-
-if !(@isdefined(_args))
-    _args = ARGS
-end
-
-args = parse_args(_args, s)
+args = @parse_args(s)
 verbose = args["verbose"]
 num_inputs = length(args["input"])
-verobse && @info args
+verbose && @info args
 @assert num_inputs ≥ 1 "need at least one input file"
 
 bounds = args["bounds"]
