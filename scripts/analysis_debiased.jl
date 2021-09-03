@@ -261,7 +261,7 @@ else
             Z = Epimap.conv(X_full, args.W)[:, num_cond:end - 1]
             Z̃s[:, :, i] = NNlib.batched_vec(F, Z)
 
-            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond:end - 1]
+            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond + 1:end]
         end
 
         Z̃s, expected_prevalence
