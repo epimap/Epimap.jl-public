@@ -335,7 +335,7 @@ Return cases `C`, either sampled or observed.
 
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
-    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond:end - 1], T(1e-3), T(1e7))
+    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond + 1:end], T(1e-3), T(1e7))
 
     # Repeat one too many times and then extract the desired section `1:num_regions`
     num_days = size(expected_positive_tests, 2)
