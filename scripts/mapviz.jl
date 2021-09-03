@@ -144,8 +144,8 @@ for (i, df) in enumerate(dfs)
             val = clamp(R / (bounds[2] - bounds[1]), 0.0, 1.0)
             # Multiply by constant in `(0, 1)` to avoid
             # extremal colors.
-            b = inv(Bijectors.Logit(0.05, 0.95)) ∘ Bijectors.Logit(0.0, 1.0)
-            get(ColorSchemes.balance, b(val))
+            # b = inv(Bijectors.Logit(0.05, 0.95)) ∘ Bijectors.Logit(0.0, 1.0)
+            get(ColorSchemes.balance, val)
         end
     end
 
@@ -173,7 +173,7 @@ for (i, df) in enumerate(dfs)
 end
 # Add `ColorBar`
 # TODO: Make this look nicer. ATM it's way too large.
-# Colorbar(fig[2, 3], limits=(0.5, 2.0), ticks=[0.5, 1.0, 1.5, 2.0], colormap=ColorSchemes.balance, flipaxis=true)
+Colorbar(fig[2, num_inputs + 1], limits=bounds, colormap=ColorSchemes.balance, flipaxis=true)
 
 # Finally display the figure.
 display(fig)
