@@ -327,6 +327,10 @@ function setup_args(
     end
 end
 
+function setup_args(::typeof(rmap), data, ::Type{T} = Float64; kwargs...) where {T}
+    # `rmap` and `rmap_naive` take the same arguments.
+    return setup_args(rmap_naive, data, T; kwargs...)
+end
 
 function make_projection(_names_latent, names_observed, dest2sources=Dict{String,Vector{String}}(); drop_invalid=true, zeros=spzeros)
     # Filter out those which are not present in `names_observed` nor in `dest2sources`, since
