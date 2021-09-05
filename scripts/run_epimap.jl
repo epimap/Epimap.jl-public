@@ -180,7 +180,7 @@ end
 states = [state];
 
 @info "Adapting!"
-@cleanbreak for state.i < nadapts
+@cleanbreak while state.i < nadapts
     global transition, state
 
     # Step
