@@ -634,8 +634,9 @@ end
     D, W,
     F_id, F_out, F_in,
     K_time, K_spatial, K_local,
-    days_per_step = 7,
-    X_cond_means = nothing,
+    days_per_step,
+    X_cond_means,
+    observation_projection,
     ::Type{T} = Float64;
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
@@ -658,7 +659,7 @@ end
     )
 
     # Likelihood.
-    @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, T)
+    @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, observation_projection, T)
 
     return (
         R = repeat(R, inner=(1, days_per_step)),
@@ -667,10 +668,10 @@ end
     )
 end
 
-@model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, ::Type{T}=Float64) where {T}
+@model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, P, ::Type{T}=Float64) where {T}
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
-    expected_positive_tests = clamp.(Epimap.conv(X, D)[:, num_cond + 1:end], T(1e-3), T(1e7))
+    expected_positive_tests = clamp.(P * Epimap.conv(X, D)[:, num_cond + 1:end], T(1e-3), T(1e7))
 
     # Accumulate the weekly cases.
     # expected_positive_tests_weekly = let tmp = expected_positive_tests
