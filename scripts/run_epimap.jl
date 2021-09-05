@@ -41,11 +41,18 @@ data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
 # Filter out areas for which we don'do not have unbiased estimates for.
 # NOTE: This is also currently done in `Rmap.setup_args` but we want to
 # save the `area_names` and so we just perform the filtering here too.
-area_names_original = data.areas.area;
-area_names_debiased = data.debiased.ltla;
-area_names = intersect(area_names_original, area_names_debiased);
+area_names_rmap = unique(data.areas.area);
+area_names_debiased = unique(data.debiased.ltla);
+dest2sources = Dict(
+    "North Northamptonshire" => ["Kettering", "Corby", "Wellingborough", "East Northamptonshire"],
+    "West Northamptonshire" => ["Daventry", "Northampton", "South Northamptonshire"],
+    "Cornwall" => ["Cornwall and Isles of Scilly"],
+    "Hackney" => ["Hackney and City of London"]
+)
+area_names_latent, area_names_observed, P = Rmap.make_projection(area_names_rmap, area_names_debiased, dest2sources)
+area_names = area_names_latent
 
-data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6, filter_debiased=false);
 @info "Doing inference for $(length(area_names)) regions."
 
 const T = Float64
@@ -57,11 +64,13 @@ args, dates = Rmap.setup_args(
     num_steps = 15,
     timestep = Week(1),
     include_dates = true,
-    last_date = Date(2021, 02, 07)
+    last_date = Date(2021, 02, 03)
 )
 
 # With `area_names` and `dates` we can recover the data being used.
 serialize(intermediatedir("area_names.jls"), area_names)
+serialize(intermediatedir("area_names_latent.jls"), area_names_latent)
+serialize(intermediatedir("area_names_observed.jls"), area_names_observed)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
