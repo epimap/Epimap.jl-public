@@ -64,7 +64,17 @@ data = Rmap.load_data();
 # Run-related information.
 dates_full = deserialize(intermediatedir("dates.jls"))
 args = deserialize(intermediatedir("args.jls"))
-area_names = deserialize(intermediatedir("area_names.jls"))
+area_names_latent = if "area_names_latent.jls" ∉ readdir(intermediatedir())
+    deserialize(intermediatedir("area_names.jls"))
+else
+    deserialize(intermediatedir("area_names_latent.jls"))
+end
+area_names_observed = if "area_names_observed.jls" ∉ readdir(intermediatedir())
+    deserialize(intermediatedir("area_names.jls"))
+else
+    deserialize(intermediatedir("area_names_observed.jls"))
+end
+area_names = area_names_latent
 T = eltype(args.D)
 
 # Setup
@@ -74,7 +84,6 @@ verbose && @info "Working with $(length(area_names)) regions."
 
 # Some useful constants.
 num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means, 2)
-num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
 # Instantiate model.
@@ -87,6 +96,10 @@ dates = (
     # Cut of the initial period which we did not observe on.
     model = dates_full.model[m.args.skip_weeks_observe * 7 + 1:end]
 )
+
+num_regions_latent = length(area_names_latent)
+num_regions_observed = length(area_names_observed)
+num_regions = num_regions_latent
 
 # Useful to compare against recorded cases.
 cases = let cases = data.cases
@@ -118,7 +131,10 @@ parameters = MCMCChains.get_sections(chain, :parameters);
 m_predict = DynamicPPLUtils.replace_args(m, logitπ = missing);
 predictions = @trynumerical TuringUtils.fast_predict(m_predict, parameters[1:thin:end]);
 
-logitπ_pred = reshape(Array(predictions), length(predictions), num_regions, :)
+logitπ_pred = reshape(
+    Array(predictions),
+    length(predictions), length(area_names_observed), :
+)
 π_pred = StatsFuns.logistic.(logitπ_pred)
 π_pred_daily = repeat(π_pred, inner=(1, 1, 7))
 
@@ -287,8 +303,6 @@ Cpred
 projection_start = dates.model[end] + Day(1)
 num_project = 14
 projection_dates = projection_start:Day(1):projection_start + Day(num_project - 1)
-
-num_regions = length(unique(unique(Xpred[:, :area])))
 
 Xproj = repeat(Xpred[Xpred[:, :Date] .≥ dates.model[end], :], inner=num_project)
 Bproj = repeat(Bpred[Bpred[:, :Date] .≥ dates.model[end], :], inner=num_project)

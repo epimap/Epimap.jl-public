@@ -141,11 +141,11 @@ for (i, df) in enumerate(dfs)
             # Median of `Rₜ`
             R = getval(target_row)
             # Normalize wrt. range [0.5, 2.0]
-            val = clamp(R / (bounds[2] - bounds[1]), 0.0, 1.0)
+            val = clamp((R - bounds[1]) / (bounds[2] - bounds[1]), 0.0, 1.0)
             # Multiply by constant in `(0, 1)` to avoid
             # extremal colors.
-            # b = inv(Bijectors.Logit(0.05, 0.95)) ∘ Bijectors.Logit(0.0, 1.0)
-            get(ColorSchemes.balance, val)
+            b = inv(Bijectors.Logit(0.05, 0.95)) ∘ Bijectors.Logit(0.0, 1.0)
+            get(ColorSchemes.balance, b(val))
         end
     end
 
@@ -164,7 +164,6 @@ for (i, df) in enumerate(dfs)
     limits = let rect = ax.finallimits.val
         Rect2D(ptrans.f(rect.origin), ptrans.f(rect.widths))
     end
-    limits = 
     limits!(ax, limits)
 
     # Let's just remove the axes and the ticklabels.
