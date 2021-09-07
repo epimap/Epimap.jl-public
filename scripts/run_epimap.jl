@@ -51,8 +51,11 @@ data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
 T = Float64
 model_def = Rmap.rmap_debiased
 
-# Construct the model arguments from data
-skip_weeks_observe = 3
+# Construct the model arguments from data.
+# We only skip weeks if we're working with `rmap_debiased`. Otherwise
+# we use the deterministic `X_cond`.
+# TODO: Make this part of `setup_args`?
+skip_weeks_observe = model_def === Rmap.rmap_debiased ? 3 : 0
 args, dates = Rmap.setup_args(
     model_def, data, T;
     num_steps = 15 + skip_weeks_observe,
