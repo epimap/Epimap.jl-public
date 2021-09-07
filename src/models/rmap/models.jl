@@ -817,7 +817,7 @@ end
     # `conv` implements a convolution which involves the current day.
     # Instead maybe we should make `conv` use the "shifted" convolution, i.e. for all
     # PREVIOUS `t`.
-    expected_positive_tests = Epimap.conv(X, D)[:, num_cond:end - 1]
+    expected_positive_tests = Epimap.conv(X, D)[:, num_cond + 1:end]
 
     # Repeat one too many times and then extract the desired section `1:num_regions`
     num_days = size(expected_positive_tests, 2)
