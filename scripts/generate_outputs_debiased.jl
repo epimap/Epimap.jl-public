@@ -62,7 +62,7 @@ mkpath(outdir())
 data = Rmap.load_data();
 
 # Run-related information.
-dates = deserialize(intermediatedir("dates.jls"))
+dates_full = deserialize(intermediatedir("dates.jls"))
 args = deserialize(intermediatedir("args.jls"))
 area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
@@ -77,15 +77,23 @@ num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means
 num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
+# Instantiate model.
+@info "Loading model from $(intermediatedir())"
+m = deserialize(intermediatedir("model.jls"));
+
+# TODO: Do this properly.
+dates = (
+    condition = dates_full.condition,
+    # Cut of the initial period which we did not observe on.
+    model = dates_full.model[m.args.skip_weeks_observe * 7 + 1:end]
+)
+
 # Useful to compare against recorded cases.
 cases = let cases = data.cases
     col_mask = names(cases) .∈ Ref(Dates.format.(dates.model, "yyyy-mm-dd"))
     Array(cases[:, col_mask])
 end
 
-# Instantiate model.
-@info "Loading model from $(intermediatedir())"
-m = deserialize(intermediatedir("model.jls"));
 @assert m.name == :rmap_debiased "model is not `Rmap.rmap_debiased`"
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 binv = inv(b);
@@ -97,7 +105,8 @@ adapt_end = findlast(t -> t.stat.is_adapt, samples);
 samples_adapt = samples[1:adapt_end];
 samples = samples[adapt_end + 1:end];
 
-# Convert into a more usual format.
+# Set the converters so we can use `TuringUtils.fast_predict` and
+# `TuringUtils.fast_generated_quantities` instead of `predict` and `generated_quantities`.
 chain = AbstractMCMC.bundle_samples(samples, var_info, MCMCChains.Chains);
 chain = MCMCChainsUtils.setconverters(chain, m);
 
@@ -154,7 +163,7 @@ results = @trynumerical TuringUtils.fast_generated_quantities(m, parameters[1:th
 Rs = extract_results(results, :R)
 Xs = extract_results(results, :X)
 Xs_cond = permutedims(reshape(Array(MCMCChains.group(chain, :X_cond)), length(chain), num_regions, :), (2, 3, 1))
-
+Xs_cond = m.args.populations .* repeat(Xs_cond ./ num_cond, inner=(1, num_cond, 1))
 Zs, expected_prevalence = if haskey(results[1], :Z)
     extract_results(results, :Z), extract_results(results, :expected_prevalence)
 else
@@ -171,12 +180,17 @@ else
             Z = Epimap.conv(X_full, args.W)[:, num_cond:end - 1]
             Z̃s[:, :, i] = NNlib.batched_vec(F, Z)
 
-            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond + 1:end]
+            expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond:end - 1]
         end
 
         Z̃s, expected_prevalence
     end
 end
+
+Rs = Rs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Xs = Xs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Zs = Zs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+expected_prevalence = expected_prevalence[:, m.args.skip_weeks_observe * 7 + 1:end, :]
 
 # "Fake" quantities.
 Bs = Xs

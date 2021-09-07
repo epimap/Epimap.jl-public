@@ -48,17 +48,18 @@ area_names = intersect(area_names_original, area_names_debiased);
 data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
 @info "Doing inference for $(length(area_names)) regions."
 
-const T = Float64
-const model_def = Rmap.rmap_debiased
+T = Float64
+model_def = Rmap.rmap_debiased
 
 # Construct the model arguments from data
+skip_weeks_observe = 3
 args, dates = Rmap.setup_args(
     model_def, data, T;
-    num_steps = 15,
+    num_steps = 15 + skip_weeks_observe,
     timestep = Week(1),
     include_dates = true,
-    last_date = Date(2021, 02, 07)
-)
+    last_date = Date(2021, 02, 03)
+);
 
 # With `area_names` and `dates` we can recover the data being used.
 serialize(intermediatedir("area_names.jls"), area_names)
@@ -66,10 +67,12 @@ serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
 m = model_def(
-    args...;
+    args[1][:, skip_weeks_observe + 1:end], args[2][:, skip_weeks_observe + 1:end],
+    Iterators.drop(args, 2)...;
     ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1),
+    skip_weeks_observe=skip_weeks_observe,
     # ρₜ = ones(T, 15), β = 0.0,
-)
+);
 serialize(intermediatedir("args.jls"), m.args)
 serialize(intermediatedir("model.jls"), m)
 
