@@ -30,7 +30,7 @@ parsed_args = @parse_args(s)
 rundir = parsed_args["path"]
 thin = parsed_args["thin"]
 verbose = parsed_args["verbose"]
-verbose && parsed_args
+verbose && @info parsed_args
 
 if parsed_args["list"]
     let d = projectdir("intermediate")
@@ -73,7 +73,7 @@ mkpath(outdir())
 println("All outputs of this script can be found in $(outdir())")
 
 # Run-related information.
-dates = deserialize(intermediatedir("dates.jls"))
+dates_full = deserialize(intermediatedir("dates.jls"))
 args = deserialize(intermediatedir("args.jls"))
 area_names = deserialize(intermediatedir("area_names.jls"))
 T = eltype(args.D)
@@ -88,15 +88,23 @@ num_cond = haskey(args, :X_cond) ? size(args.X_cond, 2) : size(args.X_cond_means
 num_regions = size(args.K_spatial, 1)
 num_steps = size(args.K_time, 1)
 
+# Instantiate model.
+@info "Loading model from $(intermediatedir())"
+m = deserialize(intermediatedir("model.jls"));
+
+# TODO: Do this properly.
+dates = (
+    condition = dates_full.condition,
+    # Cut of the initial period which we did not observe on.
+    model = dates_full.model[m.args.skip_weeks_observe * 7 + 1:end]
+)
+
 # Useful to compare against recorded cases.
 cases = let cases = data.cases
     col_mask = names(cases) .∈ Ref(Dates.format.(dates.model, "yyyy-mm-dd"))
     Array(cases[:, col_mask])
 end
 
-# Instantiate model.
-@info "Loading model from $(intermediatedir())"
-m = deserialize(intermediatedir("model.jls"));
 @assert m.name == :rmap_debiased "model is not `Rmap.rmap_debiased`"
 logπ, logπ_unconstrained, b, θ_init = Epimap.make_logjoint(m);
 binv = inv(b);
@@ -243,7 +251,10 @@ print("Computing generated quantities...")
 
 results = fast_generated_quantities(m, parameters[1:thin:end]);
 Rs = extract_results(results, :R)
+
 Xs_cond = permutedims(reshape(Array(MCMCChains.group(chain, :X_cond)), length(chain), num_regions, :), (2, 3, 1))
+Xs_cond = m.args.populations .* repeat(Xs_cond ./ num_cond, inner=(1, num_cond, 1))
+
 Xs = extract_results(results, :X)
 Zs, expected_prevalence = if haskey(results[1], :Z)
     extract_results(results, :Z), extract_results(results, :expected_prevalence)
@@ -268,8 +279,21 @@ else
     end
 end
 
+Rs_full = Rs
+Xs_full = Xs
+Zs_full = Zs
+
+Rs = Rs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Xs = Xs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Zs = Zs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+expected_prevalence = expected_prevalence[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+
+
 # NOTE: It's a bit unclear whether we should be computing the R-value
 # from `Xs` and `Zs` or directly from the inferred `π_pred`.
+Rs_computed_full = compute_R(Xs_full, Zs_full)
+Rs_computed_daily_full = Xs_full ./ Zs_full
+
 Rs_computed = compute_R(Xs, Zs)
 Rs_computed_daily = Xs ./ Zs
 Rs_computed_prevalence = repeat(
@@ -285,6 +309,8 @@ Rs_computed_prevalence = repeat(
 )
 
 println("DONE!")
+
+verbose && @info "" size(Rs) size(Xs) size(Zs) size(Rs_computed) size(Rs_computed_daily) size(prevalence_pred_daily) size(cases)
 
 # Visualize the posterior predictive.
 function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_idx=1)
@@ -325,7 +351,7 @@ function plot_posterior_predictive(ts; area=nothing, area_name=nothing, start_id
 
     p7 = plot()
     plot_density_wrt_time!(p7, ts, eachrow(Rs_computed_prevalence[area, start_idx:end, :]))
-    ylabel!("Rt (prev.)", labelfontsize=10)
+    ylabel!("Growth rate (prev)", labelfontsize=10)
     push!(ps, p7)
 
     p4 = plot()

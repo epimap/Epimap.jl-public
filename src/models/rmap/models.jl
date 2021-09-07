@@ -534,6 +534,7 @@ end
 @model function RegionalFluxWithoutCond(
     F_id, F_in, F_out,
     W, R, X_cond_means,
+    populations,
     ::Type{T} = Float64;
     days_per_step = 1,
     σ_ξ = missing,
@@ -546,7 +547,10 @@ end
     num_cond = size(X_cond_means, 2)
     num_regions = size(F_in, 1)
 
-    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(num_steps, T; days_per_step, σ_ξ, ξ, β, ρₜ, ψ)
+    @submodel (ψ, σ_ξ, ξ, ρₜ, β) = RegionalFluxPrior(
+        num_steps, T;
+        days_per_step, σ_ξ, ξ, β, ρₜ, ψ
+    )
 
     # Compute the flux matrix
     F = compute_flux(F_id, F_in, F_out, β, ρₜ, days_per_step)
@@ -563,15 +567,16 @@ end
     # 2. we're working with a `SimpleVarInfo` which supports extraction of the value.
     # This brought us ~1200ms/grad → ~400ms/grad for the "standard" setup.
     if Epimap.issampling(__context__) || !(__varinfo__ isa DynamicPPL.SimpleVarInfo)
-        X_cond ~ arraydist(truncated.(Normal.(T(1e-6) .+ X_cond_means, T(10)), T(0), T(Inf)))
+        X_cond ~ filldist(Beta(T(2), T(5)), num_regions)
     else
         # With Zygote.jl:
         # - `truncated` is slow
         # - `arraydist` is slow
         # Hence we use a the following instead.
         X_cond = __varinfo__.θ.X_cond
-        Turing.@addlogprob! sum(halfnormlogpdf.(T(1e-6) .+ X_cond_means, T(10), X_cond))
+        Turing.@addlogprob! sum(StatsFuns.betalogpdf.(T(2), T(5), X_cond))
     end
+    X_cond = populations .* repeat(X_cond ./ num_cond, inner=(1, num_cond))
 
     # Latent infections for which we have observations.
     # NOTE: Apparently AD-ing through `filldist` for large dimensions is bad.
@@ -638,6 +643,7 @@ end
     X_cond_means,
     observation_projection,
     ::Type{T} = Float64;
+    skip_weeks_observe=0,
     ρ_spatial = missing, ρ_time = missing,
     σ_spatial = missing, σ_local = missing,
     σ_ξ = missing,
@@ -654,12 +660,13 @@ end
         F_id, F_in, F_out,
         W, R,
         X_cond_means,
+        populations,
         T;
         days_per_step, σ_ξ
     )
 
     # Likelihood.
-    @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, observation_projection, T)
+    @submodel logitπ = DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, observation_projection, T; skip_weeks_observe)
 
     return (
         R = repeat(R, inner=(1, days_per_step)),
@@ -668,10 +675,17 @@ end
     )
 end
 
-@model function DebiasedLikelihood(logitπ, σ_debias, populations, X, D, num_cond, P, ::Type{T}=Float64) where {T}
+@model function DebiasedLikelihood(
+    logitπ, σ_debias, populations, X, D, num_cond, P, ::Type{T}=Float64;
+    skip_weeks_observe=0
+) where {T}
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
-    expected_positive_tests = clamp.(P * Epimap.conv(X, D)[:, num_cond + 1:end], T(1e-3), T(1e7))
+    expected_positive_tests = clamp.(
+        P * Epimap.conv(X, D)[:, 7 * skip_weeks_observe + num_cond + 1:end],
+        T(1e-3),
+        T(1e7)
+    )
 
     # Accumulate the weekly cases.
     # expected_positive_tests_weekly = let tmp = expected_positive_tests
