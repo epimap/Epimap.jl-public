@@ -441,6 +441,9 @@ function setup_args(
     area_mask = findall(∈(area_names_latent), area_names_rmap)
     area_mask_debiased = findall(∈(area_names_observed), area_names_debiased)
 
+    # Populations for latent areas.
+    populations = areas[areas[:, :area] .∈ Ref(area_names_latent), :population]
+
     # Extract cases used for `X_cond`.
     cases = Array(
         cases[in(area_names_latent).(data.cases[:, "Area name"]), vcat(dates_condition_str, dates_model_str)]
@@ -449,7 +452,6 @@ function setup_args(
 
     # Extract wanted information from filtered `debiased`.
     debiased = debiased[debiased[:, :ltla] .∈ Ref(area_names_observed), :]
-    populations = combine(groupby(debiased, :ltla), :M => first => :population)[:, :population]
     by_ltla = groupby(debiased, :ltla)
     logitπ = permutedims(mapreduce(g -> g[:, :mean], hcat, by_ltla), (2, 1))
     σ_debias = permutedims(mapreduce(g -> g[:, :sd], hcat, by_ltla), (2, 1))

@@ -682,17 +682,13 @@ end
     # Convolution.
     # Clamp the values to avoid numerical issues during sampling from the prior.
     expected_positive_tests = clamp.(
-        P * Epimap.conv(X, D)[:, 7 * skip_weeks_observe + num_cond + 1:end],
+        Epimap.conv(X, D)[:, 7 * skip_weeks_observe + num_cond + 1:end],
         T(1e-3),
         T(1e7)
     )
 
     # Accumulate the weekly cases.
-    # expected_positive_tests_weekly = let tmp = expected_positive_tests
-    #     stride_iterator = TileIterator(axes(tmp), (size(tmp, 1), 7))
-    #     mapreduce(x -> mean(x; dims=2), hcat, (@views(tmp[I...]) for I in stride_iterator))
-    # end
-    # TODO: Write using Tullio.
+    # TODO: Implement something faster? Guessing the adjoint isn't the most performant.
     expected_positive_tests_weekly = mapreduce(
         x -> mean(x, dims=2),
         hcat,
@@ -700,7 +696,14 @@ end
     )
 
     # Compute proportions.
-    expected_weekly_proportions = clamp.(expected_positive_tests_weekly ./ populations, zero(T), one(T))
+    # NOTE: This is also where we project the latent regions onto the observed regions
+    # using the projection matrix `P`. Furthermore, note that we also aggregate
+    # the `populations`.
+    expected_weekly_proportions = clamp.(
+        (P * expected_positive_tests_weekly) ./ (P * populations),
+        zero(T),
+        one(T)
+    )
     # Observe.
     if logitπ === missing
         logitπ ~ arraydist(Normal.(StatsFuns.logit.(expected_weekly_proportions), σ_debias))

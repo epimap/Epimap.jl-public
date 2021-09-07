@@ -71,6 +71,13 @@ args, dates = Rmap.setup_args(
     last_date = Date(2021, 02, 03)
 )
 
+kwargs = (ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1))
+kwargs = if model_def === Rmap.rmap_debiased
+    merge(kwargs, (skip_weeks_observe=skip_weeks_observe, ))
+else
+    kwargs
+end
+
 # With `area_names` and `dates` we can recover the data being used.
 serialize(intermediatedir("area_names.jls"), area_names)
 serialize(intermediatedir("area_names_latent.jls"), area_names_latent)
@@ -81,8 +88,7 @@ serialize(intermediatedir("dates.jls"), dates)
 m = model_def(
     args[1][:, skip_weeks_observe + 1:end], args[2][:, skip_weeks_observe + 1:end],
     Iterators.drop(args, 2)...;
-    ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1),
-    skip_weeks_observe=skip_weeks_observe,
+    kwargs...,
     # ρₜ = ones(T, 15), β = 0.0,
 );
 serialize(intermediatedir("args.jls"), m.args)
