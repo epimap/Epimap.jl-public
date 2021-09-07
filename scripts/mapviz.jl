@@ -19,6 +19,9 @@ add_default_args!(s)
     help = "boundaries for the value from the dataframe"
     default = (0.5, 2.0)
     eval_arg = true
+    "--drop-missing"
+    help = "if specified, areas for which we have no data will not be plotted"
+    action = :store_true
 end
 args = @parse_args(s)
 verbose = args["verbose"]
@@ -47,7 +50,16 @@ getval(row) = first(getproperty(row, args["column"]))
 
 # Load in the GeoJSON which describes the UK.
 geo = GeoJSON.read(read(args["geojson"]));
-getname(feature) = GeoInterface.properties(feature)["lad20nm"]
+
+# Renamings of regions.
+feature_name_renames = Dict(
+    "Cornwall" => "Cornwall and Isles of Scilly"
+)
+
+function getname(feature)
+    name = GeoInterface.properties(feature)["lad20nm"]
+    return haskey(feature_name_renames, name) ? feature_name_renames[name] : name
+end
 
 # Select a coordinate projection, using a string that PROJ accepts.
 # See e.g. https://proj.org/operations/projections/index.html
@@ -152,12 +164,14 @@ for (i, df) in enumerate(dfs)
     # Convert into something we can iterate over and plot independently.
     geobasics = map(GeoMakie.geo2basic, features);
     for (name, color, g) in zip(areanames, colors, geobasics)
-        poly!(ax, g, color=color, strokecolor=:white, strokewidth=0.05)
+        poly!(ax, g, color=color, strokecolor=:black, strokewidth=0.05)
     end
 
     # Plot the "inactive" regions too.
-    for feature in features_inactive
-        poly!(ax, GeoMakie.geo2basic(feature), color=:gray, strokecolor=:white, strokewidth=0.05)
+    if !args["drop-missing"]
+        for feature in features_inactive
+            poly!(ax, GeoMakie.geo2basic(feature), color=:gray, strokecolor=:black, strokewidth=0.05)
+        end
     end
 
     # HACK: Fix the limits of the plot.
