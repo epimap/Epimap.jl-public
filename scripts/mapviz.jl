@@ -2,41 +2,83 @@ using DrWatson, ArgParse
 
 include(scriptsdir("utils.jl"))
 
-s = ArgParseSettings()
+_usage = """
+usage: julia --project=path-to-Epimap mapviz.jl [OPTION]... [TITLE=FILE]...
+
+examples:
+  # Single interactive maps using GLMakie.jl.
+  julia --project mapviz.jl Rt.csv
+  # Multiple interactive maps using GLMakie.jl with different titles.
+  julia --project mapviz.jl run1=run1/Rt.csv run2=run2/Rt.csv
+  # Save static map to PDF using CairoMakie.jl for a particular date.
+  julia --project mapviz.jl --date=2020-12-31 --backend=CairoMakie --out=out.pdf run1=run1/Rt.csv run2=run2/Rt.csv
+"""
+
+s = ArgParseSettings(
+    description="Visualize generated outputs from Epimap models as maps.",
+    usage=_usage
+)
 add_default_args!(s)
 @add_arg_table! s begin
-    "input"
-    help = "path to input file"
+    "file"
+    help = "Path(s) to input file(s). If multiple files are provided, maps will plotted horizontally. To specify titles for the different files use the `title=path` syntax for the plots, otherwise the basename of the path will be used as the title. Note also that an empty title is allowed, e.g .`=path`."
     action = :store_arg
     nargs = '*'
     "--geojson"
-    help = "path to GeoJSON file describing the regions"
+    help = "Path to GeoJSON file describing the regions."
     default = datadir("uk_lad_boundaries_geo.json")
     "--column"
-    help = "column name used for the colouring of the regions"
+    help = "Column name used for the colouring of the regions."
     default = "Rt_50"
     "--bounds"
-    help = "boundaries for the value from the dataframe"
+    help = "Boundaries for the value from the dataframe."
     default = (0.5, 2.0)
     eval_arg = true
     "--drop-missing"
-    help = "if specified, areas for which we have no data will not be plotted"
+    help = "If specified, areas for which we have no data will not be plotted."
     action = :store_true
+    "--date"
+    help = "If specified, then the date will be fixed and slider dropped. Useful for generating static output. Example: \"2020-12-31\""
+    arg_type = Date
+    "--out"
+    help = "If specified, the figure will be saved to this destination."
+    # Visuals
+    "--backend"
+    help = "Backend to use for Makie. Choices: CairoMakie (best for static), GLMakie (best for interactive, using GPU for rendering), and WGLMakie (web-based)."
+    default = :GLMakie
+    arg_type = Symbol
+    "--stroke-color"
+    help = "Color of map boundaries."
+    default = :white
+    arg_type = Symbol
+    "--stroke-width"
+    help = "Stroke width used for map boundaries."
+    default = 0.05
+    arg_type = Float64
+    "--title-font-size"
+    help = "Font size for the titles."
+    default = 10.0
+    arg_type = Float64
+    "--figure-size"
+    help = "Size of the figure."
+    default = "(1000, 500)"
+    eval_arg = true
 end
 args = @parse_args(s)
 verbose = args["verbose"]
-num_inputs = length(args["input"])
+num_inputs = length(args["file"])
 verbose && @info args
 @assert num_inputs ≥ 1 "need at least one input file"
 
 bounds = args["bounds"]
 
 # For working with the data.
-using Dates
 using CSV, DataFrames, DataFramesMeta
 
 # For plotting.
-using GLMakie # Alternatives: `CairoMakie`, `WGLMakie`, etc.
+let backend = args["backend"]
+    eval(:(using $(backend); $(backend).activate!()))
+end
 using GeoMakie
 using GeoMakie: Makie, GeoJSON, GeoInterface
 using Proj4
@@ -69,7 +111,7 @@ trans = Proj4.Transformation(source, dest, always_xy=true)
 ptrans = Makie.PointTrans{2}(trans)
 
 # We first need to figure out the common dates to use.
-results = map(args["input"]) do inpath
+results = map(args["file"]) do inpath
     if !ispath(inpath)
         title, path = split(inpath, "=")
     else
@@ -97,16 +139,34 @@ dates = sort(intersect(dates_all...))
 verbose && @info "Using dates from $(dates[1]) to $(dates[end])"
 
 # Set up the figure.
-fig = Figure(resolution=(600, 800))
+fig = Figure(resolution=args["figure-size"])
 display(fig)
 
 # Set up a slider which we can use to specify the target date.
-labelslider = labelslider!(
-    fig[1, 1:num_inputs], "Date:", 1:length(dates);
-    format=i -> string(dates[i])
-)
-slider = labelslider.slider
-fig[1, 1:num_inputs] = labelslider.layout
+slider = if !isnothing(args["date"])
+    # "Fake" observable as a replacement for the observable given
+    # by `labelslider!` below.
+    let date = args["date"]
+        idx = findfirst(==(date), dates)
+        if isnothing(idx)
+            error("date $(date) provided is not present in the inputs")
+        end
+        # `Slider` will have a `.value` field, so we replicate this using
+        # a simple `NamedTuple`.
+        (value = Makie.Observable(idx), )
+    end
+else
+    labelslider = labelslider!(
+        fig[1, 1:num_inputs], "Date:", 1:length(dates);
+        format=i -> string(dates[i])
+    )
+    fig[1, 1:num_inputs] = labelslider.layout
+    labelslider.slider
+end
+
+# If indeed `slider isa Slider`, then we want to put the `Slider` on the top row.
+# Otherwise the maps go on top.
+map_row_idx = slider isa Slider ? 2 : 1
 
 # TODO: What does `DataAspect` do?
 for (i, df) in enumerate(dfs)
@@ -114,7 +174,13 @@ for (i, df) in enumerate(dfs)
     df = @linq df |> where(:Date .∈ Ref(dates), :area .∈ Ref(areanames))
     groups = groupby(df, :area)
 
-    ax = Axis(fig[2, i], title=titles[i], aspect=DataAspect(), width=Auto(1.0))
+    ax = Axis(
+        fig[map_row_idx, i],
+        title=titles[i],
+        titlesize=args["title-font-size"],
+        aspect=DataAspect(),
+        width=Auto(1.0),
+    )
 
     # All input data coordinates are projected using `ptrans`.
     # NOTE: The automatic limits for the plot are derived from the
@@ -164,13 +230,13 @@ for (i, df) in enumerate(dfs)
     # Convert into something we can iterate over and plot independently.
     geobasics = map(GeoMakie.geo2basic, features);
     for (name, color, g) in zip(areanames, colors, geobasics)
-        poly!(ax, g, color=color, strokecolor=:black, strokewidth=0.05)
+        poly!(ax, g, color=color, strokecolor=args["stroke-color"], strokewidth=args["stroke-width"])
     end
 
     # Plot the "inactive" regions too.
     if !args["drop-missing"]
         for feature in features_inactive
-            poly!(ax, GeoMakie.geo2basic(feature), color=:gray, strokecolor=:black, strokewidth=0.05)
+            poly!(ax, GeoMakie.geo2basic(feature), color=:gray, strokecolor=args["stroke-color"], strokewidth=args["stroke-width"])
         end
     end
 
@@ -186,10 +252,15 @@ for (i, df) in enumerate(dfs)
 end
 # Add `ColorBar`
 # TODO: Make this look nicer. ATM it's way too large.
-Colorbar(fig[2, num_inputs + 1], limits=bounds, colormap=ColorSchemes.balance, flipaxis=true)
+Colorbar(fig[map_row_idx, num_inputs + 1], limits=bounds, colormap=ColorSchemes.balance, flipaxis=true)
 
 # Finally display the figure.
 display(fig)
 
 # # TODO: Show region names, etc. upon hover.
 # inspector = DataInspector(fig)
+
+# Save, if specified.
+if !isnothing(args["out"])
+    save(args["out"], fig)
+end

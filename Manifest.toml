@@ -182,6 +182,18 @@ git-tree-sha1 = "c583f3ccdce071b8a8bce9bf3d5d5409eaf36d2b"
 uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
 version = "3.4.1"
 
+[[Cairo]]
+deps = ["Cairo_jll", "Colors", "Glib_jll", "Graphics", "Libdl", "Pango_jll"]
+git-tree-sha1 = "d0b3f8b4ad16cb0a2988c6788646a5e6a17b6b1b"
+uuid = "159f3aea-2a34-519c-b102-8c37f9878175"
+version = "1.0.5"
+
+[[CairoMakie]]
+deps = ["Base64", "Cairo", "Colors", "FFTW", "FileIO", "FreeType", "GeometryBasics", "LinearAlgebra", "Makie", "SHA", "StaticArrays"]
+git-tree-sha1 = "8664989955daccc90002629aa80193e44893bb45"
+uuid = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+version = "0.6.5"
+
 [[Cairo_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "JLLWrappers", "LZO_jll", "Libdl", "Pixman_jll", "Pkg", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Zlib_jll", "libpng_jll"]
 git-tree-sha1 = "e2f47f6d8337369411569fd45ae5753ca10394c6"
@@ -645,6 +657,12 @@ git-tree-sha1 = "2c1cf4df419938ece72de17f368a021ee162762e"
 uuid = "a2bd30eb-e257-5431-a919-1863eab51364"
 version = "1.1.0"
 
+[[Graphite2_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "344bf40dcab1073aca04aa0df4fb092f920e4011"
+uuid = "3b182d85-2403-5c21-9c21-1e1f0cc25472"
+version = "1.3.14+0"
+
 [[GridLayoutBase]]
 deps = ["GeometryBasics", "InteractiveUtils", "Match", "Observables"]
 git-tree-sha1 = "e2f606c87d09d5187bb6069dab8cee0af7c77bdb"
@@ -661,6 +679,12 @@ deps = ["Base64", "Dates", "IniFile", "Logging", "MbedTLS", "NetworkOptions", "S
 git-tree-sha1 = "44e3b40da000eab4ccb1aecdc4801c040026aeb5"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 version = "0.9.13"
+
+[[HarfBuzz_jll]]
+deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg"]
+git-tree-sha1 = "8a954fed8ac097d5be04921d595f741115c1b2ad"
+uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
+version = "2.8.1+0"
 
 [[HostCPUFeatures]]
 deps = ["IfElse", "Libdl", "Static"]
@@ -1286,6 +1310,12 @@ deps = ["OffsetArrays"]
 git-tree-sha1 = "646eed6f6a5d8df6708f15ea7e02a7a2c4fe4800"
 uuid = "5432bcbf-9aad-5242-b902-cca2824c8663"
 version = "0.5.10"
+
+[[Pango_jll]]
+deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "FriBidi_jll", "Glib_jll", "HarfBuzz_jll", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "9a336dee51d20d1ed890c4a8dca636e86e2b76ca"
+uuid = "36c8627f-9965-5494-a995-c6b170f724f3"
+version = "1.42.4+10"
 
 [[Parsers]]
 deps = ["Dates"]
