@@ -1,4 +1,4 @@
-using ArgParse, DrWatson
+using ArgParse, DrWatson, Dates
 
 using Pkg: Pkg
 using LibGit2: LibGit2
@@ -274,4 +274,9 @@ macro parse_args(argparsesettings, argsvar=:_args)
 
         $(ArgParse.parse_args)($(esc(argsvar)), $argparsesettings)
     end
+end
+
+# Custom parsing for `Date`. We always use this format.
+function ArgParse.parse_item(::Type{Date}, x::AbstractString)
+    return Date(x, dateformat"y-m-d")
 end

@@ -10,7 +10,8 @@ using DrWatson,
     Distances,
     DocStringExtensions,
     Dates,
-    StatsFuns
+    StatsFuns,
+    SparseArrays
 
 function Base.map(f, d::Dict)
     pairs = map(f, zip(keys(d), values(d)))
@@ -331,6 +332,47 @@ function setup_args(::typeof(rmap), data, ::Type{T} = Float64; kwargs...) where 
     return setup_args(rmap_naive, data, T; kwargs...)
 end
 
+function make_projection(_names_latent, names_observed, dest2sources=Dict{String,Vector{String}}(); drop_invalid=true, zeros=spzeros)
+    # Filter out those which are not present in `names_observed` nor in `dest2sources`, since
+    # for those we have no observations.
+    names_latent = filter(_names_latent) do name
+        name ∈ names_observed || any(name .∈ values(dest2sources))
+    end
+
+    # Extract the indices in `names_latent` which are to be projected to the corresponding
+    # index in `names_observed`.
+    dest2sources_indices = map(names_observed) do dest
+        if haskey(dest2sources, dest)
+            map(dest2sources[dest]) do source
+                findfirst(==(source), names_latent)
+            end
+        else
+            [findfirst(==(dest), names_latent)]
+        end
+    end
+
+    if !drop_invalid && length(names_latent) !== length(_names_latent)
+        messed_up = findall(dest2sources_indices) do inds
+            any(isnothing, inds)
+        end
+        @warn "The following regions could not be resolved" names_observed[messed_up]
+        error("some names in `names_latent` are not present in `names_observed` or `dest2sources`")
+    end
+
+    # Construct Spares
+    nobserved = length(dest2sources_indices)
+    nlatent = sum(length, dest2sources_indices)
+    P = zeros(nobserved, nlatent)
+    for (dest, sources) in enumerate(dest2sources_indices)
+        for source in sources
+            P[dest, source] = 1
+        end
+    end
+
+    return names_latent, names_observed, P
+end
+
+
 function setup_args(
     ::typeof(rmap_debiased),
     data,
@@ -346,7 +388,8 @@ function setup_args(
     num_condition_days = 30,
     condition_observations = false,
     include_dates = false,
-    observation_timestep = Week(1)
+    observation_timestep = Week(1),
+    dest2sources = nothing
 ) where {T}
     days_per_step = Dates.days(timestep)
     days_per_observation = Dates.days(observation_timestep)
@@ -386,22 +429,29 @@ function setup_args(
     debiased = debiased[debiased[:, :mid_week] .∈ Ref(vcat(dates_condition, dates_model)), :]
 
     # TODO: Resolve the regions with what we have unbiased estimates for.
-    area_names = areas[:, :area]
-    area_names_debiased = debiased[:, :ltla]
-    area_names_common = intersect(area_names, area_names_debiased)
-    area_mask = findall(∈(area_names_common), area_names)
-    @info size(area_mask)
-    area_mask_debiased = findall(∈(area_names_common), area_names_debiased)
+    dest2sources = !isnothing(dest2sources) ? dest2sources : Dict(
+        "North Northamptonshire" => ["Kettering", "Corby", "Wellingborough", "East Northamptonshire"],
+        "West Northamptonshire" => ["Daventry", "Northampton", "South Northamptonshire"],
+        "Cornwall" => ["Cornwall and Isles of Scilly"],
+        "Hackney" => ["Hackney and City of London"]
+    )
+    area_names_rmap = unique(areas[:, :area])
+    area_names_debiased = unique(debiased[:, :ltla])
+    area_names_latent, area_names_observed, P = make_projection(area_names_rmap, area_names_debiased, dest2sources)
+    area_mask = findall(∈(area_names_latent), area_names_rmap)
+    area_mask_debiased = findall(∈(area_names_observed), area_names_debiased)
+
+    # Populations for latent areas.
+    populations = areas[areas[:, :area] .∈ Ref(area_names_latent), :population]
 
     # Extract cases used for `X_cond`.
     cases = Array(
-        cases[in(area_names_common).(data.cases[:, "Area name"]), vcat(dates_condition_str, dates_model_str)]
+        cases[in(area_names_latent).(data.cases[:, "Area name"]), vcat(dates_condition_str, dates_model_str)]
     )
-    @assert size(cases, 1) == length(area_names_common)
+    @assert size(cases, 1) == length(area_names_latent)
 
     # Extract wanted information from filtered `debiased`.
-    debiased = debiased[debiased[:, :ltla] .∈ Ref(area_names_common), :]
-    populations = combine(groupby(debiased, :ltla), :M => first => :population)[:, :population]
+    debiased = debiased[debiased[:, :ltla] .∈ Ref(area_names_observed), :]
     by_ltla = groupby(debiased, :ltla)
     logitπ = permutedims(mapreduce(g -> g[:, :mean], hcat, by_ltla), (2, 1))
     σ_debias = permutedims(mapreduce(g -> g[:, :sd], hcat, by_ltla), (2, 1))
@@ -444,13 +494,13 @@ function setup_args(
         nothing
     end
 
-    num_regions = length(area_names_common)
+    num_regions = length(area_names_latent)
     @assert size(cases, 1) == num_regions
 
     ### Spatial kernel ###
     # TODO: make it this an argument?
     centers = Array(areas[area_mask, ["longitude", "latitude"]])
-    @assert areas[area_mask, :area] == area_names_common "the filter used for `data.areas` results in incorrect area names"
+    @assert areas[area_mask, :area] == area_names_latent "the filter used for `data.areas` results in incorrect area names"
     k_spatial = Matern12Kernel()
     spatial_distances = KernelFunctions.pairwise(
         KernelFunctions.Haversine(),
@@ -468,11 +518,11 @@ function setup_args(
 
     # Flux matrices
     F_id = Diagonal(ones(num_regions))    
-    @assert traffic_flux_out[area_mask, 1] == area_names_common
-    @assert names(traffic_flux_out)[1 .+ area_mask] == area_names_common
+    @assert traffic_flux_out[area_mask, 1] == area_names_latent
+    @assert names(traffic_flux_out)[1 .+ area_mask] == area_names_latent
 
-    @assert traffic_flux_in[area_mask, 1] == area_names_common
-    @assert names(traffic_flux_in)[1 .+ area_mask] == area_names_common
+    @assert traffic_flux_in[area_mask, 1] == area_names_latent
+    @assert names(traffic_flux_in)[1 .+ area_mask] == area_names_latent
 
     F_out = Array(traffic_flux_out[area_mask, 1 .+ area_mask])
     F_in = Array(traffic_flux_in[area_mask, 1 .+ area_mask])
@@ -500,6 +550,7 @@ function setup_args(
         K_local = K_local,
         days_per_step = days_per_step,
         X_cond = clamp.(X_cond, eps(T), T(Inf)),
+        observed_projection=P
     )
 
     result_adapted = adapt(Epimap.FloatMaybeAdaptor{T}(), result)
@@ -626,7 +677,8 @@ end
 
 function filter_areas_by_distance(
     data, main_areas::AbstractVector{String};
-    radius = Inf
+    radius = Inf,
+    filter_debiased = true
 )
     @info "Filtering based regions which are within $radius of $(main_areas)"
     @unpack cases, distances, areas, serial_intervals, traffic_flux_in, traffic_flux_out, debiased = data
@@ -655,7 +707,11 @@ function filter_areas_by_distance(
     names_to_include = areas[indices_to_include, :area]
 
     # Filter debiased data based on the area names.
-    debiased_filtered = debiased[debiased.ltla .∈ Ref(names_to_include), :]
+    debiased_filtered = if filter_debiased
+        debiased[debiased.ltla .∈ Ref(names_to_include), :]
+    else
+        debiased
+    end
 
     new_data = (
         areas = areas[indices_to_include, :],

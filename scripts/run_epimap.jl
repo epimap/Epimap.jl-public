@@ -41,35 +41,56 @@ data = Rmap.load_data(get(ENV, "EPIMAP_DATA", DATADIR));
 # Filter out areas for which we don'do not have unbiased estimates for.
 # NOTE: This is also currently done in `Rmap.setup_args` but we want to
 # save the `area_names` and so we just perform the filtering here too.
-area_names_original = data.areas.area;
-area_names_debiased = data.debiased.ltla;
-area_names = intersect(area_names_original, area_names_debiased);
+area_names_rmap = unique(data.areas.area);
+area_names_debiased = unique(data.debiased.ltla);
+dest2sources = Dict(
+    "North Northamptonshire" => ["Kettering", "Corby", "Wellingborough", "East Northamptonshire"],
+    "West Northamptonshire" => ["Daventry", "Northampton", "South Northamptonshire"],
+    "Cornwall" => ["Cornwall and Isles of Scilly"],
+    "Hackney" => ["Hackney and City of London"]
+)
+area_names_latent, area_names_observed, P = Rmap.make_projection(area_names_rmap, area_names_debiased, dest2sources)
+area_names = area_names_latent
 
-data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6);
+data = Rmap.filter_areas_by_distance(data, area_names; radius=1e-6, filter_debiased=false);
 @info "Doing inference for $(length(area_names)) regions."
 
-const T = Float64
-const model_def = Rmap.rmap_debiased
+T = Float64
+model_def = Rmap.rmap_debiased
 
-# Construct the model arguments from data
+# Construct the model arguments from data.
+# We only skip weeks if we're working with `rmap_debiased`. Otherwise
+# we use the deterministic `X_cond`.
+# TODO: Make this part of `setup_args`?
+skip_weeks_observe = model_def === Rmap.rmap_debiased ? 3 : 0
 args, dates = Rmap.setup_args(
     model_def, data, T;
-    num_steps = 15,
+    num_steps = 15 + skip_weeks_observe,
     timestep = Week(1),
     include_dates = true,
-    last_date = Date(2021, 02, 07)
+    last_date = Date(2021, 02, 03)
 )
+
+kwargs = (ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1))
+kwargs = if model_def === Rmap.rmap_debiased
+    merge(kwargs, (skip_weeks_observe=skip_weeks_observe, ))
+else
+    kwargs
+end
 
 # With `area_names` and `dates` we can recover the data being used.
 serialize(intermediatedir("area_names.jls"), area_names)
+serialize(intermediatedir("area_names_latent.jls"), area_names_latent)
+serialize(intermediatedir("area_names_observed.jls"), area_names_observed)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
 m = model_def(
-    args...;
-    ρ_spatial = T(0.1), ρ_time = T(100.0), σ_ξ = T(0.1),
+    args[1][:, skip_weeks_observe + 1:end], args[2][:, skip_weeks_observe + 1:end],
+    Iterators.drop(args, 2)...;
+    kwargs...,
     # ρₜ = ones(T, 15), β = 0.0,
-)
+);
 serialize(intermediatedir("args.jls"), m.args)
 serialize(intermediatedir("model.jls"), m)
 
