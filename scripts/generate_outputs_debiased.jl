@@ -46,6 +46,7 @@ using Epimap
 using TuringUtils
 using StatsFuns
 using NNlib
+using LinearAlgebra
 
 # Quantiles we're going to compute.
 qs = [0.025, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.75, 0.80, 0.90, 0.975];
@@ -57,9 +58,6 @@ mkpath(figdir())
 
 outdir(args...) = intermediatedir("out", args...)
 mkpath(outdir())
-
-# Setup
-data = Rmap.load_data();
 
 # Run-related information.
 dates_full = deserialize(intermediatedir("dates.jls"))
@@ -140,7 +138,7 @@ logitπ_pred = reshape(
 
 # Compute prediction for each weeky by repeating the prevalence across the week
 # and then divinding
-prevalence_pred = π_pred .* reshape(args.populations, 1, :, 1)
+prevalence_pred = π_pred .* reshape(args.observation_projection * args.populations, 1, :, 1)
 prevalence_pred_daily = repeat(
     prevalence_pred,
     inner=(1, 1, 7)
@@ -172,6 +170,8 @@ function extract_results(results, sym)
     return Xs
 end
 
+subtract_diag(A) = A - Diagonal(A)
+
 # Generated quantities.
 print("Computing generated quantities...")
 
@@ -180,11 +180,13 @@ Rs = extract_results(results, :R)
 Xs = extract_results(results, :X)
 Xs_cond = permutedims(reshape(Array(MCMCChains.group(chain, :X_cond)), length(chain), num_regions, :), (2, 3, 1))
 Xs_cond = m.args.populations .* repeat(Xs_cond ./ num_cond, inner=(1, num_cond, 1))
-Zs, expected_prevalence = if haskey(results[1], :Z)
+Zs, Zs_inside, Zs_outside, expected_prevalence = if haskey(results[1], :Z)
     extract_results(results, :Z), extract_results(results, :expected_prevalence)
 else
     let args = m.args, ρₜs = Array(MCMCChains.group(chain, :ρₜ)), βs = vec(chain[:β]), D = m.args.D
         Z̃s = similar(Xs)
+        Z̃s_inside = similar(Xs)
+        Z̃s_outside = similar(Xs)
         expected_prevalence = similar(Xs)
         for (i, res) in enumerate(results)
             ρₜ = ρₜs[i, :]
@@ -197,16 +199,52 @@ else
             Z̃s[:, :, i] = NNlib.batched_vec(F, Z)
 
             expected_prevalence[:, :, i] = Epimap.conv(X_full, D)[:, num_cond + 1:end]
+
+            # Disentangling external and internal infection pressure.
+
+            # We don't want to include `F_id`, nor the diagonals of `F_in` and `F_out`,
+            # so we replace `F_id` with `zeros` and `F_in` and `F_out` with the diagonals
+            # dropped.
+            F_outside = Rmap.compute_flux(
+                zeros(size(args.F_id)),
+                subtract_diag(args.F_in),
+                subtract_diag(args.F_out),
+                β,
+                ρₜ,
+                args.days_per_step
+            )
+            Z̃s_outside[:, :, i] = NNlib.batched_vec(F_outside, Z)
+
+            # Treating `F_in` and `F_out` as `Diagonal` means that only
+            # the "internal" parts of the fluxes are going to be accounted for.
+            F_inside = Rmap.compute_flux(
+                args.F_id,
+                Diagonal(args.F_in),
+                Diagonal(args.F_out),
+                β,
+                ρₜ, # Disables `F_id`
+                args.days_per_step
+            )
+            Z̃s_inside[:, :, i] = NNlib.batched_vec(F_inside, Z)
         end
 
-        Z̃s, expected_prevalence
+        Z̃s, Z̃s_inside, Z̃s_outside, expected_prevalence
     end
 end
 
 Rs = Rs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
 Xs = Xs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
 Zs = Zs[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Zs_inside = Zs_inside[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+Zs_outside = Zs_outside[:, m.args.skip_weeks_observe * 7 + 1:end, :]
 expected_prevalence = expected_prevalence[:, m.args.skip_weeks_observe * 7 + 1:end, :]
+
+# Verify that the computation is correct.
+if !((Zs_inside + Zs_outside) ≈ Zs)
+    @warn "sum internal and external infection pressure does not equal full infection pressure!"
+end
+Zs_inside_portion = Zs_inside ./ Zs
+Zs_outside_portion = Zs_outside ./ Zs
 
 # "Fake" quantities.
 Bs = Xs
@@ -264,6 +302,61 @@ Xs_nms = make_colnames("X_", names_qs);
 Xpred = DataFrame(hcat(Xs_vals, repeat(["inferred"], size(Xs_vals, 1))), Xs_nms);
 CSV.write(outdir("Xpred.csv"), Xpred)
 Xpred
+
+# (✓) `Zpred.csv`
+@info "Computing quantiles for `Zs`, i.e. `Zpred.csv`"
+Zs_qs = mapslices(Zs; dims=3) do X
+    quantile(X, qs)
+end;
+Zs_vals = flatten_by_area(Zs_qs);
+Zs_nms = make_colnames("Z_", names_qs);
+Zpred = DataFrame(hcat(Zs_vals, repeat(["inferred"], size(Zs_vals, 1))), Zs_nms);
+CSV.write(outdir("Zpred.csv"), Zpred)
+Zpred
+
+# (✓) `Z_inside_pred.csv`
+@info "Computing quantiles for `Zs_inside`, i.e. `Z_inside_pred.csv`"
+Zs_inside_qs = mapslices(Zs_inside; dims=3) do X
+    quantile(X, qs)
+end;
+Zs_inside_vals = flatten_by_area(Zs_inside_qs);
+Zs_inside_nms = make_colnames("Z_", names_qs);
+Z_inside_pred = DataFrame(hcat(Zs_inside_vals, repeat(["inferred"], size(Zs_inside_vals, 1))), Zs_inside_nms);
+CSV.write(outdir("Z_inside_pred.csv"), Z_inside_pred)
+Z_inside_pred
+
+# (✓) `Z_outside_pred.csv`
+@info "Computing quantiles for `Zs_outside`, i.e. `Z_outside_pred.csv`"
+Zs_outside_qs = mapslices(Zs_outside; dims=3) do X
+    quantile(X, qs)
+end;
+Zs_outside_vals = flatten_by_area(Zs_outside_qs);
+Zs_outside_nms = make_colnames("Z_", names_qs);
+Z_outside_pred = DataFrame(hcat(Zs_outside_vals, repeat(["inferred"], size(Zs_outside_vals, 1))), Zs_outside_nms);
+CSV.write(outdir("Z_outside_pred.csv"), Z_outside_pred)
+Z_outside_pred
+
+# (✓) `Z_inside_portion_pred.csv`
+@info "Computing quantiles for `Zs_inside_portion`, i.e. `Z_inside_portion_pred.csv`"
+Zs_inside_portion_qs = mapslices(Zs_inside_portion; dims=3) do X
+    quantile(X, qs)
+end;
+Zs_inside_portion_vals = flatten_by_area(Zs_inside_portion_qs);
+Zs_inside_portion_nms = make_colnames("Z_", names_qs);
+Z_inside_portion_pred = DataFrame(hcat(Zs_inside_portion_vals, repeat(["inferred"], size(Zs_inside_portion_vals, 1))), Zs_inside_portion_nms);
+CSV.write(outdir("Z_inside_portion_pred.csv"), Z_inside_portion_pred)
+Z_inside_portion_pred
+
+# (✓) `Z_outside_portion_pred.csv`
+@info "Computing quantiles for `Zs_outside_portion`, i.e. `Z_outside_portion_pred.csv`"
+Zs_outside_portion_qs = mapslices(Zs_outside_portion; dims=3) do X
+    quantile(X, qs)
+end;
+Zs_outside_portion_vals = flatten_by_area(Zs_outside_portion_qs);
+Zs_outside_portion_nms = make_colnames("Z_", names_qs);
+Z_outside_portion_pred = DataFrame(hcat(Zs_outside_portion_vals, repeat(["inferred"], size(Zs_outside_portion_vals, 1))), Zs_outside_portion_nms);
+CSV.write(outdir("Z_outside_portion_pred.csv"), Z_outside_portion_pred)
+Z_outside_portion_pred
 
 # (✓) `Bpred.csv`
 @info "Computing quantiles for `Bs`, i.e. `Bpred.csv`"
