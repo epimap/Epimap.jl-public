@@ -85,12 +85,16 @@ serialize(intermediatedir("area_names_observed.jls"), area_names_observed)
 serialize(intermediatedir("dates.jls"), dates)
 
 # Instantiate model
-m = model_def(
-    args[1][:, skip_weeks_observe + 1:end], args[2][:, skip_weeks_observe + 1:end],
-    Iterators.drop(args, 2)...;
-    kwargs...,
-    # ρₜ = ones(T, 15), β = 0.0,
-);
+m = if model_def === Rmap.rmap_debiased
+    model_def(
+        args[1][:, skip_weeks_observe + 1:end], args[2][:, skip_weeks_observe + 1:end],
+        Iterators.drop(args, 2)...;
+        kwargs...,
+        # ρₜ = ones(T, 15), β = 0.0,
+    );
+else
+    model_def(args...; kwargs...)
+end
 serialize(intermediatedir("args.jls"), m.args)
 serialize(intermediatedir("model.jls"), m)
 
