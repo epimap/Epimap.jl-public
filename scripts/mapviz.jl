@@ -32,7 +32,7 @@ add_default_args!(s)
     default = "Rt_50"
     "--bounds"
     help = "Boundaries for the value from the dataframe."
-    default = (0.5, 2.0)
+    default = (0.0, 2.0)
     eval_arg = true
     "--drop-missing"
     help = "If specified, areas for which we have no data will not be plotted."
@@ -61,7 +61,7 @@ add_default_args!(s)
     arg_type = Float64
     "--figure-size"
     help = "Size of the figure."
-    default = "(1000, 500)"
+    default = (1000, 500)
     eval_arg = true
 end
 args = @parse_args(s)
