@@ -9,6 +9,7 @@ add_default_args!(s)
 @add_arg_table! s begin
     "rundir"
     help = "Output directory for the run."
+    required = true
     "--thin"
     arg_type = Int
     default = 1
