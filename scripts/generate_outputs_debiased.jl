@@ -37,6 +37,7 @@ verbose && @info rundir
 # Ensure that we're using the correct version of the package.
 if !parsed_args["ignore-commit"]
     interactive_checkout_maybe(rundir)
+    using Pkg; Pkg.instantiate()
 end
 
 using Printf
@@ -48,6 +49,9 @@ using TuringUtils
 using StatsFuns
 using NNlib
 using LinearAlgebra
+
+using Random
+Random.seed!(parsed_args["seed"])
 
 # Quantiles we're going to compute.
 qs = [0.025, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.75, 0.80, 0.90, 0.975];

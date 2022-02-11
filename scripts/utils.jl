@@ -213,6 +213,10 @@ function add_default_args!(s::ArgParseSettings)
         "--verbose"
         help = "If specified, additional info will be printed."
         action = :store_true
+        "--seed"
+        help = "Random seed to use."
+        arg_type = Int
+        default = 1
     end
     return s
 end
