@@ -49,7 +49,7 @@ add_default_args!(s)
     arg_type = Symbol
     "--stroke-color"
     help = "Color of map boundaries."
-    default = :white
+    default = :black
     arg_type = Symbol
     "--stroke-width"
     help = "Stroke width used for map boundaries."
